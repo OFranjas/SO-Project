@@ -27,6 +27,7 @@
 #define MAX_STRING_SIZE 32
 #define MIN_STRING_SIZE 3
 #define BUFF_SIZE 2048
+#define KEY_SIZE 4096
 #define MSQ_KEY 0x1234
 #define SEM_NAME "Semaforo"
 
@@ -40,7 +41,7 @@ typedef struct config_struct {
 
 typedef struct message {
     long type;
-    char content[BUFF_SIZE];
+    char content[BUFF_SIZE * 5];
 
 } Message;
 
@@ -69,7 +70,7 @@ typedef struct key_queue {
 } KeyQueue;
 
 typedef struct shared_memory_struct {
-    KeyQueue *key_queue;
+    KeyQueue key_queue[KEY_SIZE];
 
 } SharedMemory;
 

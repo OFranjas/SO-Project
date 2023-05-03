@@ -55,6 +55,7 @@ void WorkerProcess(int id, int fd) {
 
             if (msgsnd(msgqid, &msg, sizeof(msg) - sizeof(long), 0) == -1) {
                 perror("msgsnd");
+                printf("Content: %s\n", msg.content);
                 exit(1);
             }
 
@@ -78,12 +79,39 @@ void WorkerProcess(int id, int fd) {
 
                 printf("Key: %s\n", key);
 
-               
                 sem_wait(semaforo);
 
-                 // Add to the key queue
-                 
-                
+                // Add to the key queue
+                for (int i = 0; i < KEY_SIZE; i++) {
+                    if (strcmp(sharedMemory->key_queue[i].chave, key) == 0) {
+                        printf("AQUI2\n");
+                        sharedMemory->key_queue[i].last = atoi(value);
+                        sharedMemory->key_queue[i].count++;
+                        sharedMemory->key_queue[i].media = (sharedMemory->key_queue[i].media + atoi(value)) / sharedMemory->key_queue[i].count;
+
+                        if (atoi(value) < sharedMemory->key_queue[i].min) {
+                            sharedMemory->key_queue[i].min = atoi(value);
+                        }
+
+                        if (atoi(value) > sharedMemory->key_queue[i].max) {
+                            sharedMemory->key_queue[i].max = atoi(value);
+                        }
+
+                        break;
+                    } else if (strcmp(sharedMemory->key_queue[i].chave, "") == 0) {
+                        printf("AQUI3\n");
+                        strcpy(sharedMemory->key_queue[i].chave, key);
+                        strcpy(sharedMemory->key_queue[i].ID, sensorID);
+                        sharedMemory->key_queue[i].last = atoi(value);
+                        sharedMemory->key_queue[i].count = 1;
+                        sharedMemory->key_queue[i].media = atoi(value);
+                        sharedMemory->key_queue[i].min = atoi(value);
+                        sharedMemory->key_queue[i].max = atoi(value);
+
+                        break;
+                    }
+                }
+
                 sem_post(semaforo);
 
             } else if (strncmp(token, "C", 1) == 0) {
@@ -95,23 +123,97 @@ void WorkerProcess(int id, int fd) {
                 // If the command is "stats", print the key queue
                 if (strcmp(token, "stats") == 0) {
                     sem_wait(semaforo);
-                    KeyQueue *currentKey = sharedMemory->key_queue;
 
-                    printf("AQUI1\n");
+                    // Send the message to the console with format "key last min max media count"
+                    Message msg;
+                    msg.type = 1;
 
-                    while (currentKey != NULL && strcmp(currentKey->chave, "") != 0) {
-                        printf("AQUI3\n");
-                        printf("Key: %s\n", currentKey->chave);
-                        printf("ID: %s\n", currentKey->ID);
-                        printf("Last: %d\n", currentKey->last);
-                        printf("Count: %d\n", currentKey->count);
-                        printf("Media: %f\n", currentKey->media);
-                        printf("Min: %d\n", currentKey->min);
-                        printf("Max: %d\n", currentKey->max);
+                    for (int i = 0; i < KEY_SIZE; i++) {
+                        if (strcmp(sharedMemory->key_queue[i].chave, "") != 0) {
+                            sprintf(msg.content, "%s %d %d %d %f %d", sharedMemory->key_queue[i].chave, sharedMemory->key_queue[i].last, sharedMemory->key_queue[i].min, sharedMemory->key_queue[i].max, sharedMemory->key_queue[i].media, sharedMemory->key_queue[i].count);
 
-                        currentKey = currentKey->next;
+                            if (msgsnd(msgqid, &msg, sizeof(msg), 0) == -1) {
+                                perror("msgsnd");
+                                exit(1);
+                            }
+
+                            printf("Message sent to console\n");
+                        }
                     }
+
                     sem_post(semaforo);
+                } else if (strcmp(token, "reset") == 0) {
+                    // If the key queue is empy, send "ERROR" to the console
+                    int empty = 1;
+
+                    sem_wait(semaforo);
+
+                    for (int i = 0; i < KEY_SIZE; i++) {
+                        if (strcmp(sharedMemory->key_queue[i].chave, "") != 0) {
+                            empty = 0;
+                            break;
+                        }
+                    }
+
+                    sem_post(semaforo);
+
+                    if (empty) {
+                        Message msg;
+                        msg.type = 1;
+                        strcpy(msg.content, "ERROR");
+
+                        if (msgsnd(msgqid, &msg, sizeof(msg) - sizeof(long), 0) == -1) {
+                            perror("msgsnd");
+                            exit(1);
+                        }
+
+                        // printf("Message sent to console\n");
+
+                        continue;
+                    }
+                    // Clear the key queue
+                    sem_wait(semaforo);
+
+                    for (int i = 0; i < KEY_SIZE; i++) {
+                        sharedMemory->key_queue[i].last = 0;
+                        sharedMemory->key_queue[i].count = 0;
+                        sharedMemory->key_queue[i].media = 0;
+                        sharedMemory->key_queue[i].min = 0;
+                        sharedMemory->key_queue[i].max = 0;
+                    }
+
+                    sem_post(semaforo);
+
+                    // Send the message to the console
+
+                    Message msg;
+                    msg.type = 1;
+                    strcpy(msg.content, "OK");
+
+                    if (msgsnd(msgqid, &msg, sizeof(msg) - sizeof(long), 0) == -1) {
+                        perror("msgsnd");
+                        exit(1);
+                    }
+
+                } else if (strcmp(token, "sensors") == 0) {
+                    // Print the key queus chave
+                    sem_wait(semaforo);
+
+                    Message msg;
+                    msg.type = 1;
+
+                    for (int i = 0; i < KEY_SIZE; i++) {
+                        if (strcmp(sharedMemory->key_queue[i].chave, "") != 0) {
+                            sprintf(msg.content, "%s", sharedMemory->key_queue[i].chave);
+
+                            if (msgsnd(msgqid, &msg, sizeof(msg), 0) == -1) {
+                                perror("msgsnd");
+                                exit(1);
+                            }
+
+                            // printf("Message sent to console\n");
+                        }
+                    }
                 }
             }
 
