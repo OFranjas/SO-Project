@@ -3,8 +3,6 @@
 - Menu para ler comandos
 */
 
-// Global global;
-
 int fd_console_pipe;
 
 int debug = 1;

@@ -1,6 +1,6 @@
 #include "lib/header.h"
 
-// ================== Process Variables ==========================
+// ================== Variables ==========================
 
 // Processes IDs
 int processIDs[10];
@@ -9,7 +9,7 @@ int alertsWatcherID;
 // Threads
 pthread_t sensorReaderThread, consoleReaderThread, dispatcherThread;
 
-int debug = 1;
+int debug = 0;
 
 int parentPID;
 
@@ -17,21 +17,180 @@ SharedMemory sharedMemory;
 
 Queue *queue;
 
-// Global global;
+KeyQueue *keyQueue;
+
+sem_t *semaforo;
+
+// ================== Processes ==========================
+void WorkerProcess(int id, int fd) {
+    // Create String with the process ID
+    char buf[BUFF_SIZE * 10];
+    sprintf(buf, "Worker process ID %d created\n", id);
+
+    escreverLog(buf);
+
+    while (1) {
+        // Read from the pipe
+        char buffer[BUFF_SIZE * 4];
+        char *token;
+
+        int r = read(fd, buffer, sizeof(buffer));
+
+        if (r == -1) {
+            perror("read");
+            exit(1);
+        }
+
+        if (r > 1) {
+            // Print the message
+            sprintf(buf, "Worker %d received: %s\n", id, buffer);
+            escreverLog(buf);
+
+            char aux[BUFF_SIZE * 4];
+            strcpy(aux, buffer);
+
+            // Parse the message to check if it's from a sensor or a console
+            token = strtok(aux, ";");
+
+            printf("Token: %s\n", token);
+
+            // sem_wait(semaforo);
+
+            if (strcmp(token, "S") == 0) {
+                // Parse the message ID#key#value
+                token = strtok(NULL, ";");
+
+                char *sensorID = strtok(token, "#");
+                char *key = strtok(NULL, "#");
+                char *value = strtok(NULL, "#");
+
+                printf("Key: %s\n", key);
+
+                // Add to the key queue
+                KeyQueue *currentKey = sharedMemory.key_queue;
+
+                // Verify if the key already exists
+                while (currentKey != NULL) {
+                    if (strcmp(currentKey->chave, key) == 0) {
+                        // If it exists, update the values
+                        currentKey->last = atoi(value);
+                        currentKey->count++;
+                        currentKey->media = (currentKey->media + atoi(value)) / currentKey->count;
+
+                        if (atoi(value) < currentKey->min) {
+                            currentKey->min = atoi(value);
+                        }
+
+                        if (atoi(value) > currentKey->max) {
+                            currentKey->max = atoi(value);
+                        }
+
+                        break;
+                    }
+
+                    currentKey = currentKey->next;
+                }
+
+                // If it doesn't exist, create a new one
+                if (currentKey == NULL) {
+                    KeyQueue *newKey = malloc(sizeof(KeyQueue));
+
+                    strcpy(newKey->chave, key);
+                    strcpy(newKey->ID, sensorID);
+                    newKey->last = atoi(value);
+                    newKey->count = 1;
+                    newKey->media = atoi(value);
+                    newKey->min = atoi(value);
+                    newKey->max = atoi(value);
+
+                    newKey->next = sharedMemory.key_queue;
+                    sharedMemory.key_queue = newKey;
+                }
+
+            } else if (strncmp(token, "C", 1) == 0) {
+                // Parse the command
+                token = strtok(NULL, ";");
+
+                printf("Command: %s\n", token);
+
+                // If the command is "stats", print the key queue
+                if (strcmp(token, "stats") == 0) {
+                    KeyQueue *currentKey = sharedMemory.key_queue;
+
+                    while (currentKey != NULL) {
+                        printf("AQUI3\n");
+                        printf("Key: %s\n", currentKey->chave);
+                        printf("ID: %s\n", currentKey->ID);
+                        printf("Last: %d\n", currentKey->last);
+                        printf("Count: %d\n", currentKey->count);
+                        printf("Media: %f\n", currentKey->media);
+                        printf("Min: %d\n", currentKey->min);
+                        printf("Max: %d\n", currentKey->max);
+
+                        currentKey = currentKey->next;
+                    }
+                }
+            }
+
+            // sem_post(semaforo);
+
+            // Clear the buffer and the token
+        }
+        memset(buffer, 0, sizeof(buffer));
+        token = NULL;
+    }
+}
 
 // ================== Functions ==========================
+
+void terminateAll() {
+    if (parentPID == getpid()) {
+        // Terminate the shared memory
+        shmdt(sharedMemory.dados);
+        shmctl(sharedMemory.shmid, IPC_RMID, 0);
+
+        if (debug)
+            escreverLog("Shared memory terminated\n");
+
+        // Terminate the threads
+        pthread_cancel(sensorReaderThread);
+        pthread_cancel(consoleReaderThread);
+        pthread_cancel(dispatcherThread);
+
+        if (debug)
+            escreverLog("Threads terminated\n");
+
+        // Wait for the worker processes to terminate
+        for (int i = 1; i < config.num_workers + 1; i++) {
+            waitpid(processIDs[i], NULL, 0);
+        }
+
+        // Wait for the Alerts Watcher process to terminate
+        waitpid(alertsWatcherID, NULL, 0);
+
+        if (debug)
+            escreverLog("Processes terminated\n");
+
+        escreverLog("Program terminated\n");
+
+        exit(0);
+    } else {
+        // Terminate the child process
+        exit(0);
+    }
+}
 
 // Function to add a new node to the queue
 void addNodeToQueue(Queue *newNode) {
     Queue *currentNode = queue;
 
-    // If the queue is empty
+    // If the queue is empty, add the node to the queue
     if (currentNode == NULL) {
         queue = newNode;
         return;
     }
 
-    // If the queue is not empty
+    // If the queue is not empty, add the node to the end of the queue
     while (currentNode->next != NULL) {
         currentNode = currentNode->next;
     }
@@ -43,12 +202,12 @@ void addNodeToQueue(Queue *newNode) {
 Queue *popNodeFromQueue() {
     Queue *currentNode = queue;
 
-    // If the queue is empty
+    // If the queue is empty, return NULL
     if (currentNode == NULL) {
         return NULL;
     }
 
-    // If the queue is not empty
+    // If the queue is not empty, pop the first node of the queue
     queue = currentNode->next;
 
     return currentNode;
@@ -66,6 +225,8 @@ int createSharedMemory() {
         escreverLog("shmat() error\n");
         return 1;
     }
+
+    sharedMemory.key_queue = NULL;
 
     escreverLog("Shared memory created\n");
 
@@ -91,7 +252,8 @@ void *sensorReader() {
         size = read(fd_sensor_pipe, message, sizeof(message));
 
         if (size > MIN_STRING_SIZE) {
-            printf("Message: %s\n", message);
+            if (debug)
+                printf("Message: %s\n", message);
 
             // Separate the message into tokens (sensorID, key, value), separated by #. Example: string#chave#87
             char *token;
@@ -191,8 +353,11 @@ void *consoleReader() {
     pthread_exit(NULL);
 }
 
-void *dispatcher() {
+void *dispatcher(void *arg) {
     escreverLog("Dispatcher Thread Started\n");
+
+    // Get the argument fd_unnamed_pipe[config.num_workers][2]
+    int(*fd_unnamed_pipe)[2] = (int(*)[2])arg;
 
     while (1) {
         // If the queue is not empty
@@ -207,12 +372,51 @@ void *dispatcher() {
                         printf("Dispatcher:\n");
                         printf("Command: %s\n", currentNode->command);
                     }
+
+                    // Write to a random worker unnamed pipe
+                    int randomWorker = rand() % config.num_workers;
+
+                    if (debug) {
+                        printf("Random Worker: %d\n", randomWorker);
+                    }
+
+                    char message[BUFF_SIZE * 4];
+                    sprintf(message, "C;%s", currentNode->command);
+
+                    // Write to the worker
+                    if (write(fd_unnamed_pipe[randomWorker][1], message, sizeof(currentNode->command)) < 0) {
+                        escreverLog("Error writing to worker\n");
+                        perror("Error writing to worker");
+                    }
                 }
 
-                // If the command is "exit"
-                if (strcmp(currentNode->command, "exit") == 0) {
-                    // Terminate the program
-                    terminateAll();
+                // If the node is a message
+                if (currentNode->prioridade == 1) {
+                    if (debug) {
+                        printf("Dispatcher:\n");
+                        printf("ID: %s\n", currentNode->ID);
+                    }
+
+                    // Turn the message into a string of format -> ID#chave#valor
+                    char message[BUFF_SIZE * 4];
+                    sprintf(message, "S;%s#%s#%d", currentNode->ID, currentNode->chave, currentNode->valor);
+
+                    if (debug) {
+                        printf("Message: %s\n", message);
+                    }
+
+                    // Write to a random worker unnamed pipe
+                    int randomWorker = rand() % config.num_workers;
+
+                    if (debug) {
+                        printf("Random Worker: %d\n", randomWorker);
+                    }
+
+                    // Write to the worker
+                    if (write(fd_unnamed_pipe[randomWorker][1], message, sizeof(message)) < 0) {
+                        escreverLog("Error writing to worker\n");
+                        perror("Error writing to worker");
+                    }
                 }
 
                 // print the queue after the pop
@@ -230,20 +434,6 @@ void *dispatcher() {
                         aux = aux->next;
                     }
                 }
-
-                // If the node is a message
-                if (currentNode->prioridade == 1) {
-                    if (debug) {
-                        printf("Dispatcher:\n");
-                        printf("ID: %s\n", currentNode->ID);
-                    }
-
-                    // If the message is from a sensor
-                    if (strcmp(currentNode->chave, "temperatura") == 0 || strcmp(currentNode->chave, "humidade") == 0) {
-                        // Send the message to the Alerts Watcher process
-                        kill(alertsWatcherID, SIGUSR1);
-                    }
-                }
             }
         }
 
@@ -251,45 +441,6 @@ void *dispatcher() {
     }
 
     pthread_exit(NULL);
-}
-
-void terminateAll() {
-    if (parentPID == getpid()) {
-        // Terminate the shared memory
-        shmdt(sharedMemory.dados);
-        shmctl(sharedMemory.shmid, IPC_RMID, 0);
-
-        if (debug)
-            escreverLog("Shared memory terminated\n");
-
-        // Terminate the threads
-        pthread_cancel(sensorReaderThread);
-        pthread_cancel(consoleReaderThread);
-        pthread_cancel(dispatcherThread);
-
-        if (debug)
-            escreverLog("Threads terminated\n");
-
-        // Wait for the worker processes to terminate
-        for (int i = 1; i < config.num_workers + 1; i++) {
-            waitpid(processIDs[i], NULL, 0);
-        }
-
-        // Wait for the Alerts Watcher process to terminate
-        waitpid(alertsWatcherID, NULL, 0);
-
-        if (debug)
-            escreverLog("Processes terminated\n");
-
-        escreverLog("Program terminated\n");
-
-        // return 0;
-        exit(0);
-    } else {
-        // Terminate the processes
-        // escreverLog("Worker Process terminated\n");
-        exit(0);
-    }
 }
 
 int main(int argc, char *argv[]) {
@@ -320,9 +471,46 @@ int main(int argc, char *argv[]) {
         terminateAll();
     }
 
+    // ===================================== Create the Semaphores ==========================================
+    sem_unlink("Semaforo");
+    if ((semaforo = sem_open("Semaforo", O_CREAT | O_EXCL, 0777, 1)) == SEM_FAILED) {
+        escreverLog("Error creating semaphore\n");
+        perror("Error creating semaphore");
+        terminateAll();
+    }
+
+    // ===================================== Create the Pipes =====================
+    unlink("consolePipe");
+    unlink("sensorPipe");
+
+    // Console Pipe
+    if ((mkfifo("consolePipe", O_CREAT | O_EXCL | 0777) < 0 && errno != EEXIST)) {
+        escreverLog("Error creating Console Pipe\n");
+        perror("Error creating Console Pipe");
+        terminateAll();
+    }
+
+    // Sensor Pipe
+    if ((mkfifo("sensorPipe", O_CREAT | O_EXCL | 0777) < 0 && errno != EEXIST)) {
+        escreverLog("Error creating Sensor Pipe\n");
+        perror("Error creating Sensor Pipe");
+        terminateAll();
+    }
+
+    // Unnamed Pipes
+    int fd_unnamed_pipe[config.num_workers][2];
+
+    for (int i = 0; i < config.num_workers; i++) {
+        if (pipe(fd_unnamed_pipe[i]) == -1) {
+            escreverLog("Error creating Unnamed Pipe\n");
+            perror("Error creating Unnamed Pipe");
+            terminateAll();
+        }
+    }
+
     // ===================================== Create the Worker Processes ======================================
 
-    for (int i = 1; i < config.num_workers + 1; i++) {
+    for (int i = 0; i < config.num_workers; i++) {
         processIDs[i] = fork();
 
         if (processIDs[i] > 0) {
@@ -332,7 +520,7 @@ int main(int argc, char *argv[]) {
 
         } else if (processIDs[i] == 0) {
             // Child process
-            WorkerProcess(i);
+            WorkerProcess(i, fd_unnamed_pipe[i][0]);
             exit(0);
 
         } else {
@@ -359,24 +547,6 @@ int main(int argc, char *argv[]) {
         terminateAll();
     }
 
-    // ===================================== Create the Console Pipe and the Sensor Pipe =====================
-    unlink("consolePipe");
-    unlink("sensorPipe");
-
-    if ((mkfifo("consolePipe", O_CREAT | O_EXCL | 0777) < 0 && errno != EEXIST)) {
-        escreverLog("Error creating Console Pipe\n");
-        perror("Error creating Console Pipe");
-        terminateAll();
-    }
-
-    if ((mkfifo("sensorPipe", O_CREAT | O_EXCL | 0777) < 0 && errno != EEXIST)) {
-        escreverLog("Error creating Sensor Pipe\n");
-        perror("Error creating Sensor Pipe");
-        terminateAll();
-    }
-
-    printf("Ola");
-
     // ====================================== Create the threads =============================================
 
     // Create Sensor Reader, Console Reader and Dispatcher threads
@@ -392,7 +562,7 @@ int main(int argc, char *argv[]) {
         terminateAll();
     }
 
-    if (pthread_create(&dispatcherThread, NULL, dispatcher, NULL) != 0) {
+    if (pthread_create(&dispatcherThread, NULL, dispatcher, fd_unnamed_pipe) != 0) {
         escreverLog("Error creating Dispatcher Thread\n");
         perror("Error creating Dispatcher Thread");
         terminateAll();
@@ -403,7 +573,6 @@ int main(int argc, char *argv[]) {
     // ===================================== Keep the program running ========================================
 
     while (1) {
-        sleep(1);
     }
 
     return 0;

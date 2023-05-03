@@ -36,11 +36,6 @@ typedef struct config_struct {
     int max_alerts;
 } Config;
 
-typedef struct shared_memory_struct {
-    int *dados;
-    int shmid;
-} SharedMemory;
-
 typedef struct message {
     int sensorID;
     char *key;
@@ -58,6 +53,26 @@ typedef struct internal_queue {
     int valor;
     int prioridade;
 } Queue;
+
+typedef struct key_queue {
+    struct key_queue *next;
+
+    char chave[BUFF_SIZE];
+    char ID[BUFF_SIZE];
+    int last;
+    int min;
+    int max;
+    double media;
+    int count;
+
+} KeyQueue;
+
+typedef struct shared_memory_struct {
+    int *dados;
+    int shmid;
+
+    struct key_queue *key_queue;
+} SharedMemory;
 
 extern Config config;
 
