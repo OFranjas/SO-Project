@@ -1,12 +1,25 @@
 # Objetivos Hoje
 
+<<<<<<< HEAD
 - [ ] Key Queue -> DEU MERDA, cada worker parece ter a sua shared memory
 - [ ] Printar lista de keys
 - [x] Message Queue Workers
+=======
+- [ ] Key Queue
+- [ ] Printar lista de keys
+>>>>>>> 7eb3837af83fc96f65eb04ac17aba19a40acd49c
 
 # Falta
 
+<<<<<<< HEAD
 - [ ] Alerts Watcher
+=======
+- [ ]
+
+# Extra Bonus
+
+- [ ]
+>>>>>>> 7eb3837af83fc96f65eb04ac17aba19a40acd49c
 
 # Ajuda (Gameiro)
 

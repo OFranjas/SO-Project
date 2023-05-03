@@ -17,11 +17,9 @@ SharedMemory *sharedMemory;
 
 Queue *queue;
 
+KeyQueue *keyQueue;
+
 sem_t *semaforo;
-
-int shmid;
-
-int msgqid;
 
 // ================== Processes ==========================
 void WorkerProcess(int id, int fd) {
@@ -48,18 +46,6 @@ void WorkerProcess(int id, int fd) {
             sprintf(buf, "Worker %d received: %s\n", id, buffer);
             escreverLog(buf);
 
-            // Send the message to the console
-            Message msg;
-            msg.type = 1;
-            strcpy(msg.content, buf);
-
-            if (msgsnd(msgqid, &msg, sizeof(msg) - sizeof(long), 0) == -1) {
-                perror("msgsnd");
-                exit(1);
-            }
-
-            printf("Message sent to console\n");
-
             char aux[BUFF_SIZE * 4];
             strcpy(aux, buffer);
 
@@ -67,6 +53,8 @@ void WorkerProcess(int id, int fd) {
             token = strtok(aux, ";");
 
             printf("Token: %s\n", token);
+
+            // sem_wait(semaforo);
 
             if (strcmp(token, "S") == 0) {
                 // Parse the message ID#key#value
@@ -79,14 +67,11 @@ void WorkerProcess(int id, int fd) {
                 printf("Key: %s\n", key);
 
                 // Add to the key queue
-                sem_wait(semaforo);
-                KeyQueue *currentKey = sharedMemory->key_queue;
+                KeyQueue *currentKey = sharedMemory.key_queue;
 
                 // Verify if the key already exists
                 while (currentKey != NULL) {
                     if (strcmp(currentKey->chave, key) == 0) {
-                        sem_wait(semaforo);
-
                         // If it exists, update the values
                         currentKey->last = atoi(value);
                         currentKey->count++;
@@ -99,8 +84,6 @@ void WorkerProcess(int id, int fd) {
                         if (atoi(value) > currentKey->max) {
                             currentKey->max = atoi(value);
                         }
-
-                        sem_post(semaforo);
 
                         break;
                     }
@@ -119,23 +102,10 @@ void WorkerProcess(int id, int fd) {
                     newKey->media = atoi(value);
                     newKey->min = atoi(value);
                     newKey->max = atoi(value);
-                    newKey->next = NULL;
 
-                    // Add to the end of the queue
-                    if (sharedMemory->key_queue == NULL) {
-                        sharedMemory->key_queue = newKey;
-                    } else {
-                        currentKey = sharedMemory->key_queue;
-
-                        while (currentKey->next != NULL) {
-                            currentKey = currentKey->next;
-                        }
-
-                        currentKey->next = newKey;
-                    }
+                    newKey->next = sharedMemory.key_queue;
+                    sharedMemory.key_queue = newKey;
                 }
-
-                sem_post(semaforo);
 
             } else if (strncmp(token, "C", 1) == 0) {
                 // Parse the command
@@ -145,12 +115,9 @@ void WorkerProcess(int id, int fd) {
 
                 // If the command is "stats", print the key queue
                 if (strcmp(token, "stats") == 0) {
-                    sem_wait(semaforo);
-                    KeyQueue *currentKey = sharedMemory->key_queue;
+                    KeyQueue *currentKey = sharedMemory.key_queue;
 
-                    printf("AQUI1\n");
-
-                    while (currentKey != NULL && strcmp(currentKey->chave, "") != 0) {
+                    while (currentKey != NULL) {
                         printf("AQUI3\n");
                         printf("Key: %s\n", currentKey->chave);
                         printf("ID: %s\n", currentKey->ID);
@@ -162,69 +129,21 @@ void WorkerProcess(int id, int fd) {
 
                         currentKey = currentKey->next;
                     }
-                    sem_post(semaforo);
                 }
             }
+
+            // sem_post(semaforo);
 
             // Clear the buffer and the token
         }
         memset(buffer, 0, sizeof(buffer));
         token = NULL;
-        sem_post(semaforo);
     }
 }
-
-void AlertsWatcherProcess(int id) {
-    char buf[64];
-    sprintf(buf, "Alerts watcher process ID %d created\n", id);
 
     escreverLog(buf);
 }
 // ================== Functions ==========================
-
-void terminateAll() {
-    if (parentPID == getpid()) {
-        // Terminate the shared memory
-        shmdt(sharedMemory);
-        shmctl(shmid, IPC_RMID, 0);
-
-        if (debug)
-            escreverLog("Shared memory terminated\n");
-
-        // Terminate the threads
-        pthread_cancel(sensorReaderThread);
-        pthread_cancel(consoleReaderThread);
-        pthread_cancel(dispatcherThread);
-
-        if (debug)
-            escreverLog("Threads terminated\n");
-
-        // Wait for the worker processes to terminate
-        for (int i = 1; i < config.num_workers + 1; i++) {
-            waitpid(processIDs[i], NULL, 0);
-        }
-
-        // Wait for the Alerts Watcher process to terminate
-        waitpid(alertsWatcherID, NULL, 0);
-
-        // Close the message queue
-        msgctl(msgqid, IPC_RMID, NULL);
-
-        // Close the semaphore
-        sem_close(semaforo);
-        sem_unlink(SEM_NAME);
-
-        if (debug)
-            escreverLog("Processes terminated\n");
-
-        escreverLog("Program terminated\n");
-
-        exit(0);
-    } else {
-        // Terminate the child process
-        exit(0);
-    }
-}
 
 // Function to add a new node to the queue
 void addNodeToQueue(Queue *newNode) {
@@ -271,6 +190,8 @@ int createSharedMemory() {
         escreverLog("shmat() error\n");
         return 1;
     }
+
+    sharedMemory.key_queue = NULL;
 
     escreverLog("Shared memory created\n");
 
@@ -513,51 +434,6 @@ int main(int argc, char *argv[]) {
     if (createSharedMemory()) {
         escreverLog("ERROR CREATING SHARED MEMORY\n");
         terminateAll();
-    }
-
-    // ===================================== Create the Semaphores ==========================================
-    sem_unlink(SEM_NAME);
-    if ((semaforo = sem_open(SEM_NAME, O_CREAT | O_EXCL, 0777, 1)) == SEM_FAILED) {
-        escreverLog("Error creating semaphore\n");
-        perror("Error creating semaphore");
-        terminateAll();
-    }
-
-    // ===================================== Create the Message Queue ========================================
-    key_t key = ftok(".", MSQ_KEY);
-    if ((msgqid = msgget(key, IPC_CREAT | 0777)) < 0) {
-        escreverLog("Error creating message queue\n");
-        perror("Error creating message queue");
-        terminateAll();
-    }
-
-    // ===================================== Create the Pipes =====================
-    unlink("consolePipe");
-    unlink("sensorPipe");
-
-    // Console Pipe
-    if ((mkfifo("consolePipe", O_CREAT | O_EXCL | 0777) < 0 && errno != EEXIST)) {
-        escreverLog("Error creating Console Pipe\n");
-        perror("Error creating Console Pipe");
-        terminateAll();
-    }
-
-    // Sensor Pipe
-    if ((mkfifo("sensorPipe", O_CREAT | O_EXCL | 0777) < 0 && errno != EEXIST)) {
-        escreverLog("Error creating Sensor Pipe\n");
-        perror("Error creating Sensor Pipe");
-        terminateAll();
-    }
-
-    // Unnamed Pipes
-    int fd_unnamed_pipe[config.num_workers][2];
-
-    for (int i = 0; i < config.num_workers; i++) {
-        if (pipe(fd_unnamed_pipe[i]) == -1) {
-            escreverLog("Error creating Unnamed Pipe\n");
-            perror("Error creating Unnamed Pipe");
-            terminateAll();
-        }
     }
 
     // ===================================== Create the Worker Processes ======================================

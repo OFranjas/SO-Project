@@ -65,10 +65,21 @@ typedef struct key_queue {
     int max;
     double media;
     int count;
+<<<<<<< HEAD
 } KeyQueue;
 
 typedef struct shared_memory_struct {
     KeyQueue *key_queue;
+=======
+
+} KeyQueue;
+
+typedef struct shared_memory_struct {
+    int *dados;
+    int shmid;
+
+    struct key_queue *key_queue;
+>>>>>>> 7eb3837af83fc96f65eb04ac17aba19a40acd49c
 } SharedMemory;
 
 extern Config config;
