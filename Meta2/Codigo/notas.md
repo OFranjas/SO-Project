@@ -1,13 +1,20 @@
 # Objetivos Hoje
 
-- [x] Internal Queue adicionar (sensor reader e user console)
-- [ ] Dispatcher dar pop
+- [ ] Key Queue -> DEU MERDA, cada worker parece ter a sua shared memory
+- [ ] Printar lista de keys
+- [x] Message Queue Workers
 
-# Bonus
+# Falta
 
-- [ ] Enviar para worker por unnamed pipe
+- [ ] Alerts Watcher
 
 # Ajuda (Gameiro)
+
+## Comando para pipes
+
+```
+sudo mount -t drvfs C: /mnt/c -o metadata,uid=1000,gid=1000,umask=22,fmask=111
+```
 
 ## Função para ignorar todos os sinais
 

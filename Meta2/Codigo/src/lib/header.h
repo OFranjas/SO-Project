@@ -27,6 +27,8 @@
 #define MAX_STRING_SIZE 32
 #define MIN_STRING_SIZE 3
 #define BUFF_SIZE 2048
+#define MSQ_KEY 0x1234
+#define SEM_NAME "Semaforo"
 
 typedef struct config_struct {
     int queue_size;
@@ -36,15 +38,9 @@ typedef struct config_struct {
     int max_alerts;
 } Config;
 
-typedef struct shared_memory_struct {
-    int *dados;
-    int shmid;
-} SharedMemory;
-
 typedef struct message {
-    int sensorID;
-    char *key;
-    int value;
+    long type;
+    char content[BUFF_SIZE];
 
 } Message;
 
@@ -59,9 +55,25 @@ typedef struct internal_queue {
     int prioridade;
 } Queue;
 
+typedef struct key_queue {
+    struct key_queue *next;
+
+    char chave[BUFF_SIZE];
+    char ID[BUFF_SIZE];
+    int last;
+    int min;
+    int max;
+    double media;
+    int count;
+} KeyQueue;
+
+typedef struct shared_memory_struct {
+    KeyQueue *key_queue;
+} SharedMemory;
+
 extern Config config;
 
-extern SharedMemory sharedMemory;
+extern SharedMemory *sharedMemory;
 
 extern Queue *queue;
 

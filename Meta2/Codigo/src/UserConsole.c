@@ -3,11 +3,13 @@
 - Menu para ler comandos
 */
 
-// Global global;
-
 int fd_console_pipe;
 
 int debug = 1;
+
+int msgqid;
+
+int consoleID;
 
 int addAlert(char *alertId, char *key, int min, int max) {
     // Verificar se o sensor_id é válido (minimo 3 caracteres, maximo 32)
@@ -40,6 +42,22 @@ int addAlert(char *alertId, char *key, int min, int max) {
     return 0;
 }
 
+void *reader() {
+    Message buffer;
+
+    while (1) {
+        // Ler da Message Queue
+        if (msgrcv(msgqid, &buffer, sizeof(buffer), consoleID, 0) < 0) {
+            escreverLog("Error reading from Message Queue\n");
+            return NULL;
+        }
+        // Escrever no ecrã
+        printf("%s\n", buffer.content);
+    }
+
+    pthread_exit(NULL);
+}
+
 int main(int argc, char *argv[]) {
     // =================== Receber o ID da consola como parâmetro ===================
     if (argc != 2) {
@@ -52,7 +70,7 @@ int main(int argc, char *argv[]) {
         return 1;
     }
 
-    int consoleID = atoi(argv[1]);
+    consoleID = atoi(argv[1]);
 
     printf("Console ID: %d\n", consoleID);
 
@@ -60,6 +78,24 @@ int main(int argc, char *argv[]) {
 
     if ((fd_console_pipe = open("consolePipe", O_WRONLY | O_NONBLOCK)) < 0) {
         escreverLog("Error opening Console Pipe\n");
+        return 1;
+    }
+
+    // =================== Abrir Message Queue ===================
+
+    key_t key;
+    key = ftok(".", MSQ_KEY);
+
+    if ((msgqid = msgget(key, 0660)) < 0) {
+        escreverLog("Error opening Message Queue\n");
+        return 1;
+    }
+
+    // =================== Criar thread para ler da Message Queue ===================
+    pthread_t reader_thread;
+
+    if (pthread_create(&reader_thread, NULL, reader, NULL) != 0) {
+        escreverLog("Error creating reader thread\n");
         return 1;
     }
 
@@ -81,6 +117,8 @@ int main(int argc, char *argv[]) {
         // Verificar todos os possíveis comandos (exit, stats, reset, sensors, list_alerts) or add_alert <sensor_id> <key> <min> <max> or remove_alert <sensor_id>
         if (strcmp(command, "exit") == 0) {
             printf("Exiting...\n");
+
+            pthread_cancel(reader_thread);
 
             break;
         } else if (strcmp(command, "stats") == 0) {
