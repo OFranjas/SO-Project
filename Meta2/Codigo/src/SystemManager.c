@@ -31,7 +31,7 @@ int msgqid;
 void WorkerProcess(int id, int fd) {
     // Create String with the process ID
     char buf[BUFF_SIZE * 10];
-    sprintf(buf, "Worker process ID %d created\n", id);
+    sprintf(buf, "WORKER %d CREATED\n", id);
 
     sem_wait(semaforo_log);
     escreverLog(buf);
@@ -74,10 +74,23 @@ void WorkerProcess(int id, int fd) {
 
                 // printf("Key: %s\n", key);
 
+                // Verify if key queue is full
+                sem_wait(semaforo);
+                if (sharedMemory->key_size == config.max_keys) {
+                    sem_wait(semaforo_log);
+                    char buffa[4096 * 4];
+                    sprintf(buffa, "WORKER%d: %s %s %s QUEUE IS FULL\n", id, sensorID, key, value);
+                    escreverLog(buffa);
+                    sem_post(semaforo);
+                    continue;
+                }
+
+                sem_post(semaforo);
+
                 sem_wait(semaforo);
 
                 // Add to the key queue
-                for (int i = 0; i < KEY_SIZE; i++) {
+                for (int i = 0; i < config.max_keys; i++) {
                     if (strcmp(sharedMemory->key_queue[i].chave, key) == 0) {
                         // printf("AQUI2\n");
                         sharedMemory->key_queue[i].last = atoi(value);
@@ -110,6 +123,13 @@ void WorkerProcess(int id, int fd) {
                 sem_post(semaforo);
                 sem_post(semaforo_keys);
 
+                // Write to the log file
+                sem_wait(semaforo_log);
+                char buffa[4096 * 4];
+                sprintf(buffa, "WORKER%d: %s %s %s PROCESSING COMPLETED\n", id, sensorID, key, value);
+                escreverLog(buffa);
+                sem_post(semaforo_log);
+
             } else if (strncmp(token, "C", 1) == 0) {
                 // Parse the command
                 token = strtok(NULL, ";");
@@ -127,7 +147,7 @@ void WorkerProcess(int id, int fd) {
                     sem_wait(semaforo);
 
                     // Print Key Queue with format -> key last min max media count
-                    for (int i = 0; i < KEY_SIZE; i++) {
+                    for (int i = 0; i < config.max_keys; i++) {
                         if (strcmp(sharedMemory->key_queue[i].chave, "") != 0) {
                             sprintf(msg.content, "%s %d %d %d %.2f %d", sharedMemory->key_queue[i].chave, sharedMemory->key_queue[i].last, sharedMemory->key_queue[i].min, sharedMemory->key_queue[i].max, sharedMemory->key_queue[i].media, sharedMemory->key_queue[i].count);
 
@@ -143,13 +163,20 @@ void WorkerProcess(int id, int fd) {
                     }
 
                     sem_post(semaforo);
+
+                    sem_wait(semaforo_log);
+                    char buffa[4096 * 4];
+                    sprintf(buffa, "WORKER%d: %s PROCESSING COMPLETED\n", id, token);
+                    escreverLog(buffa);
+                    sem_post(semaforo_log);
+
                 } else if (strcmp(token, "reset") == 0) {
                     // If the key queue is empy, send "ERROR" to the console
                     int empty = 1;
 
                     sem_wait(semaforo);
 
-                    for (int i = 0; i < KEY_SIZE; i++) {
+                    for (int i = 0; i < config.max_keys; i++) {
                         if (strcmp(sharedMemory->key_queue[i].chave, "") != 0) {
                             empty = 0;
                             break;
@@ -166,14 +193,18 @@ void WorkerProcess(int id, int fd) {
                             exit(1);
                         }
 
-                        // printf("Message sent to console\n");
+                        sem_wait(semaforo_log);
+                        char buffa[4096 * 4];
+                        sprintf(buffa, "WORKER%d: %s PROCESSING COMPLETED\n", id, token);
+                        escreverLog(buffa);
+                        sem_post(semaforo_log);
 
                         continue;
                     }
                     // Clear the key queue
                     sem_wait(semaforo);
 
-                    for (int i = 0; i < KEY_SIZE; i++) {
+                    for (int i = 0; i < config.max_keys; i++) {
                         sharedMemory->key_queue[i].last = 0;
                         sharedMemory->key_queue[i].count = 0;
                         sharedMemory->key_queue[i].media = 0;
@@ -192,11 +223,17 @@ void WorkerProcess(int id, int fd) {
                         exit(1);
                     }
 
+                    sem_wait(semaforo_log);
+                    char buffa[4096 * 4];
+                    sprintf(buffa, "WORKER%d: %s PROCESSING COMPLETED\n", id, token);
+                    escreverLog(buffa);
+                    sem_post(semaforo_log);
+
                 } else if (strcmp(token, "sensors") == 0) {
                     // Print the key queus chave
                     sem_wait(semaforo);
 
-                    for (int i = 0; i < KEY_SIZE; i++) {
+                    for (int i = 0; i < config.max_keys; i++) {
                         if (strcmp(sharedMemory->key_queue[i].chave, "") != 0) {
                             sprintf(msg.content, "%s", sharedMemory->key_queue[i].chave);
 
@@ -210,8 +247,18 @@ void WorkerProcess(int id, int fd) {
                     }
 
                     sem_post(semaforo);
+
+                    sem_wait(semaforo_log);
+                    char buffa[4096 * 4];
+                    sprintf(buffa, "WORKER%d: %s PROCESSING COMPLETED\n", id, token);
+                    escreverLog(buffa);
+                    sem_post(semaforo_log);
                 } else if (strncmp(token, "add_alert", strlen("add_alert")) == 0) {
                     // Separar o token em argumentos
+
+                    char final[4096];
+                    strcpy(final, token);
+
                     token = strtok(token, " ");
                     char *args[5];
                     int i = 0;
@@ -222,10 +269,34 @@ void WorkerProcess(int id, int fd) {
                         i++;
                     }
 
+                    // Verificar tamanho da alerts queue
+                    sem_wait(semaforo);
+
+                    if (sharedMemory->alerts_size == config.max_alerts) {
+                        strcpy(msg.content, "ERROR");
+
+                        if (msgsnd(msgqid, &msg, sizeof(msg) - sizeof(long), 0) == -1) {
+                            perror("msgsnd");
+                            exit(1);
+                        }
+
+                        sem_wait(semaforo_log);
+                        char buffa[4096 * 4];
+                        sprintf(buffa, "WORKER%d: %s PROCESSING COMPLETED\n", id, final);
+                        escreverLog(buffa);
+                        sem_post(semaforo_log);
+
+                        sem_post(semaforo);
+
+                        continue;
+                    }
+
+                    sem_post(semaforo);
+
                     // Adicionar à alert queue
                     sem_wait(semaforo);
 
-                    for (i = 0; i < ALERTS_SIZE; i++) {
+                    for (i = 0; i < config.max_alerts; i++) {
                         if (strcmp(sharedMemory->alert_queue[i].id, "") == 0) {
                             strcpy(sharedMemory->alert_queue[i].id, args[1]);
                             strcpy(sharedMemory->alert_queue[i].chave, args[2]);
@@ -254,11 +325,15 @@ void WorkerProcess(int id, int fd) {
                         exit(1);
                     }
 
-                    // printf("Message sent to console: %s\n", msg.content);
+                    sem_wait(semaforo_log);
+                    char buffa[4096 * 4];
+                    sprintf(buffa, "WORKER%d: %s PROCESSING COMPLETED\n", id, final);
+                    escreverLog(buffa);
+                    sem_post(semaforo_log);
 
                 } else if (strcmp(token, "list_alerts") == 0) {
                     sem_wait(semaforo);
-                    for (int i = 0; i < ALERTS_SIZE; i++) {
+                    for (int i = 0; i < config.max_alerts; i++) {
                         Message msg;
                         msg.type = atoi(consoleID);
                         if (strcmp(sharedMemory->alert_queue[i].id, "") != 0) {
@@ -270,7 +345,16 @@ void WorkerProcess(int id, int fd) {
                         }
                     }
                     sem_post(semaforo);
+
+                    sem_wait(semaforo_log);
+                    char buffa[4096 * 4];
+                    sprintf(buffa, "WORKER%d: %s PROCESSING COMPLETED\n", id, token);
+                    escreverLog(buffa);
+                    sem_post(semaforo_log);
                 } else if (strncmp(token, "remove_alert", strlen("remove-alert")) == 0) {
+                    char final[4096];
+                    strcpy(final, token);
+
                     // Remove the alert from the alert queue
                     token = strtok(token, " ");
                     char *args[2];
@@ -284,7 +368,7 @@ void WorkerProcess(int id, int fd) {
 
                     sem_wait(semaforo);
 
-                    for (i = 0; i < ALERTS_SIZE; i++) {
+                    for (i = 0; i < config.max_alerts; i++) {
                         if (strcmp(sharedMemory->alert_queue[i].id, args[1]) == 0) {
                             strcpy(sharedMemory->alert_queue[i].id, "");
                             strcpy(sharedMemory->alert_queue[i].chave, "");
@@ -302,6 +386,10 @@ void WorkerProcess(int id, int fd) {
 
                     sem_post(semaforo);
 
+                    sem_wait(semaforo);
+                    sharedMemory->alerts_size--;
+                    sem_post(semaforo);
+
                     Message msg;
                     msg.type = atoi(consoleID);
 
@@ -312,6 +400,12 @@ void WorkerProcess(int id, int fd) {
                         perror("msgsnd");
                         exit(1);
                     }
+
+                    sem_wait(semaforo_log);
+                    char buffa[4096 * 4];
+                    sprintf(buffa, "WORKER%d: %s PROCESSING COMPLETED\n", id, final);
+                    escreverLog(buffa);
+                    sem_post(semaforo_log);
                 }
             }
 
@@ -327,21 +421,18 @@ void WorkerProcess(int id, int fd) {
 }
 
 void AlertsWatcherProcess(int id) {
-    char buf[64];
-    sprintf(buf, "Alerts watcher process ID %d created\n", id);
-
     int printed;
 
     sem_wait(semaforo_log);
-    escreverLog(buf);
+    escreverLog("PROCESS ALERTS_WATCHER CREATED\n");
     sem_post(semaforo_log);
 
     while (1) {
         sem_wait(semaforo_alerts);
 
-        for (int i = 0; i < ALERTS_SIZE; i++) {
+        for (int i = 0; i < config.max_alerts; i++) {
             if (strcmp(sharedMemory->alert_queue[i].id, "") != 0) {
-                for (int j = 0; j < KEY_SIZE; j++) {
+                for (int j = 0; j < config.max_keys; j++) {
                     if (strcmp(sharedMemory->key_queue[j].chave, sharedMemory->alert_queue[i].chave) == 0) {
                         if (printed == sharedMemory->key_queue[j].last) {
                             continue;
@@ -350,7 +441,7 @@ void AlertsWatcherProcess(int id) {
                         if (sharedMemory->key_queue[j].last < sharedMemory->alert_queue[i].min || sharedMemory->key_queue[j].last > sharedMemory->alert_queue[i].max) {
                             Message msg;
                             msg.type = sharedMemory->alert_queue[i].consoleID;
-                            sprintf(msg.content, "ALERT %s (%s %d to %d) TRIGGERED", sharedMemory->alert_queue[i].id, sharedMemory->key_queue[j].chave, sharedMemory->alert_queue[i].min, sharedMemory->alert_queue[i].max);
+                            sprintf(msg.content, "ALERT %s (%s %d to %d) TRIGGERED\n", sharedMemory->alert_queue[i].id, sharedMemory->key_queue[j].chave, sharedMemory->alert_queue[i].min, sharedMemory->alert_queue[i].max);
 
                             if (msgsnd(msgqid, &msg, sizeof(msg) - sizeof(long), 0) == -1) {
                                 perror("msgsnd");
@@ -416,7 +507,8 @@ void escreverLog(char *mensagem) {
 void terminateAll() {
     if (parentPID == getpid()) {
         sem_wait(semaforo_log);
-        escreverLog("Terminating Program\n");
+        escreverLog("SIGNAL SIGTSTP RECEIVED\n");
+        escreverLog("HOME_IOT SIMULATOR WAITING FOR LAST TASKS TO FINISH\n");
         sem_post(semaforo_log);
 
         // Terminate the shared memory
@@ -438,6 +530,10 @@ void terminateAll() {
 
         // Close the message queue
         msgctl(msgqid, IPC_RMID, NULL);
+
+        sem_wait(semaforo_log);
+        escreverLog("HOME_IOT SIMULATOR CLOSING\n");
+        sem_post(semaforo_log);
 
         // Close the semaphores
         sem_close(semaforo);
@@ -507,15 +603,13 @@ int createSharedMemory() {
         return 1;
     }
 
-    sem_wait(semaforo_log);
-    escreverLog("Shared memory created\n");
-    sem_post(semaforo_log);
-
     sem_wait(semaforo);
-    // Initialize the ocupados array with 0 for the number of workers
     for (int i = 0; i < config.num_workers; i++) {
         sharedMemory->ocupados[i] = 0;
     }
+    sharedMemory->queue_size = 0;
+    sharedMemory->key_size = 0;
+    sharedMemory->alerts_size = 0;
     sem_post(semaforo);
 
     return 0;
@@ -523,7 +617,7 @@ int createSharedMemory() {
 
 void *sensorReader() {
     sem_wait(semaforo_log);
-    escreverLog("Sensor Reader Thread Started\n");
+    escreverLog("THREAD SENSOR_READER\n");
     sem_post(semaforo_log);
 
     int fd_sensor_pipe;
@@ -558,6 +652,19 @@ void *sensorReader() {
 
             token = strtok(NULL, "#");
             value = atoi(token);
+
+            sem_wait(semaforo);
+            // Check if queue is full
+            if (sharedMemory->queue_size == config.queue_size) {
+                sem_wait(semaforo_log);
+                escreverLog("ERROR: QUEUE IS FULL\n");
+                sem_post(semaforo_log);
+
+                continue;
+            } else {
+                sharedMemory->queue_size++;
+            }
+            sem_post(semaforo);
 
             // Add the message to the queue
             Queue *newNode = (Queue *)malloc(sizeof(Queue));
@@ -597,7 +704,7 @@ void *sensorReader() {
 
 void *consoleReader() {
     sem_wait(semaforo_log);
-    escreverLog("Console Reader Thread Started\n");
+    escreverLog("THREAD CONSOLE_READER CREATED\n");
     sem_post(semaforo_log);
 
     int fd_console_pipe;
@@ -616,6 +723,19 @@ void *consoleReader() {
 
         if (size > 1) {
             // printf("Command: %s\n", command);
+
+            sem_wait(semaforo);
+            // Check if queue is full
+            if (sharedMemory->queue_size == config.queue_size) {
+                sem_wait(semaforo_log);
+                escreverLog("ERROR: QUEUE IS FULL\n");
+                sem_post(semaforo_log);
+
+                continue;
+            } else {
+                sharedMemory->queue_size++;
+            }
+            sem_post(semaforo);
 
             // Add the command to the queue
             Queue *newNode = (Queue *)malloc(sizeof(Queue));
@@ -649,7 +769,7 @@ void *consoleReader() {
 
 void *dispatcher(void *arg) {
     sem_wait(semaforo_log);
-    escreverLog("Dispatcher Thread Started\n");
+    escreverLog("THREAD DISPATCHER CREATED\n");
     sem_post(semaforo_log);
 
     // Get the argument fd_unnamed_pipe[config.num_workers][2]
@@ -661,6 +781,9 @@ void *dispatcher(void *arg) {
             // Get the first node of the queue
             pthread_mutex_lock(&mutex);
             Queue *currentNode = popNodeFromQueue();
+            sem_wait(semaforo);
+            sharedMemory->queue_size--;
+            sem_post(semaforo);
             pthread_mutex_unlock(&mutex);
 
             if (currentNode != NULL) {
@@ -681,6 +804,20 @@ void *dispatcher(void *arg) {
                     if (write(fd_unnamed_pipe[randomWorker][1], message, sizeof(currentNode->command)) < 0) {
                         perror("Error writing to worker");
                     }
+
+                    // Write to the log
+                    sem_wait(semaforo_log);
+                    char buffa[4096 * 3];
+                    // sprintf(buffa, "DISPATCHER: %s SENT FOR PROCESSING ON WORKER %d\n", currentNode->command, randomWorker);
+
+                    // CurrentNode->command except last 2 characters
+                    char command[64];
+                    strncpy(command, currentNode->command, strlen(currentNode->command) - 2);
+                    command[strlen(currentNode->command) - 2] = '\0';
+
+                    sprintf(buffa, "DISPATCHER: %s SENT FOR PROCESSING ON WORKER %d\n", command, randomWorker);
+                    escreverLog(buffa);
+                    sem_post(semaforo_log);
                 }
 
                 // If the node is a message
@@ -709,6 +846,12 @@ void *dispatcher(void *arg) {
                     if (write(fd_unnamed_pipe[randomWorker][1], message, sizeof(message)) < 0) {
                         perror("Error writing to worker");
                     }
+
+                    sem_wait(semaforo_log);
+                    char buffa[4096 * 3];
+                    sprintf(buffa, "DISPATCHER: %s %s %d SENT FOR PROCESSING ON WORKER %d\n", currentNode->ID, currentNode->chave, currentNode->valor, randomWorker);
+                    escreverLog(buffa);
+                    sem_post(semaforo_log);
                 }
 
                 // print the queue after the pop
@@ -778,6 +921,10 @@ int main(int argc, char *argv[]) {
         perror("Error creating keys semaphore");
         terminateAll();
     }
+
+    sem_wait(semaforo_log);
+    escreverLog("HOME_IOT SIMULATOR STARTING\n");
+    sem_post(semaforo_log);
 
     // ==================================== Read the configuration file ======================================
 

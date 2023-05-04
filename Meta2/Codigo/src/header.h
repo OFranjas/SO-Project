@@ -26,9 +26,13 @@
 #define MAX_WORKERS 999
 #define MAX_STRING_SIZE 32
 #define MIN_STRING_SIZE 3
+
 #define BUFF_SIZE 2048
 #define KEY_SIZE 4096
 #define ALERTS_SIZE 4096
+#define QUEUE_SIZE 4096
+
+#define SENSORS_SIZE 4096
 #define MSQ_KEY 0x4209
 #define SEM_NAME "Semaforo"
 #define SEM_LOG_NAME "SemaforoLog"
@@ -88,6 +92,9 @@ typedef struct shared_memory_struct {
     AlertQueue alert_queue[KEY_SIZE];
 
     int ocupados[MAX_WORKERS];
+    int queue_size;
+    int alerts_size;
+    int key_size;
 } SharedMemory;
 
 extern Config config;
