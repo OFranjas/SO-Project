@@ -82,6 +82,11 @@ void WorkerProcess(int id, int fd) {
                     sprintf(buffa, "WORKER%d: %s %s %s QUEUE IS FULL\n", id, sensorID, key, value);
                     escreverLog(buffa);
                     sem_post(semaforo);
+
+                    // Make the worker available again
+                    sem_wait(semaforo);
+                    sharedMemory->ocupados[id] = 0;
+                    sem_post(semaforo);
                     continue;
                 }
 
@@ -199,6 +204,11 @@ void WorkerProcess(int id, int fd) {
                         escreverLog(buffa);
                         sem_post(semaforo_log);
 
+                        // Make the worker available again
+                        sem_wait(semaforo);
+                        sharedMemory->ocupados[id] = 0;
+                        sem_post(semaforo);
+
                         continue;
                     }
                     // Clear the key queue
@@ -286,6 +296,11 @@ void WorkerProcess(int id, int fd) {
                         escreverLog(buffa);
                         sem_post(semaforo_log);
 
+                        sem_post(semaforo);
+
+                        // Make the worker available again
+                        sem_wait(semaforo);
+                        sharedMemory->ocupados[id] = 0;
                         sem_post(semaforo);
 
                         continue;
