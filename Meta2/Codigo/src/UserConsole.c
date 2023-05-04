@@ -58,6 +58,24 @@ void *reader() {
     pthread_exit(NULL);
 }
 
+void ignorar() {
+    struct sigaction sa;
+    sa.sa_handler = SIG_IGN;
+    sigemptyset(&sa.sa_mask);
+    sa.sa_flags = 0;
+
+    for (int i = 1; i <= 64; i++) {
+        if (sigaction(i, &sa, NULL) == -1) {
+            // Ignorar sinais que não são suportados
+            if (errno == EINVAL) {
+                continue;
+            }
+            perror("Erro a ignorar sinais");
+            exit(1);
+        }
+    }
+}
+
 int main(int argc, char *argv[]) {
     // =================== Receber o ID da consola como parâmetro ===================
     if (argc != 2) {
@@ -71,6 +89,8 @@ int main(int argc, char *argv[]) {
     }
 
     consoleID = atoi(argv[1]);
+
+    ignorar();
 
     // printf("Console ID: %d\n", consoleID);
 

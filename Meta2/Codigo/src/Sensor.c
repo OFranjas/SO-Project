@@ -21,6 +21,27 @@ void stop() {
     exit(0);
 }
 
+void ignorar() {
+    struct sigaction sa;
+    sa.sa_handler = SIG_IGN;
+    sigemptyset(&sa.sa_mask);
+    sa.sa_flags = 0;
+
+    for (int i = 1; i <= 64; i++) {
+        if (i == SIGINT || i == SIGTSTP) {
+            continue;
+        }
+        if (sigaction(i, &sa, NULL) == -1) {
+            // Ignorar sinais que não são suportados
+            if (errno == EINVAL) {
+                continue;
+            }
+            perror("Erro a ignorar sinais");
+            exit(1);
+        }
+    }
+}
+
 int main(int argc, char *argv[]) {
     // Verificar se o número de argumentos é válido
     if (argc != 6) {
@@ -30,6 +51,7 @@ int main(int argc, char *argv[]) {
 
     signal(SIGTSTP, enviadas);
     signal(SIGINT, stop);
+    ignorar();
 
     // ================== Abrir Named Pipe ==========================
     if ((fd_sensor_pipe = open("sensorPipe", O_WRONLY)) < 0) {

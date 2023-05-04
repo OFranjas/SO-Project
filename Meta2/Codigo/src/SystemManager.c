@@ -374,6 +374,27 @@ void AlertsWatcherProcess(int id) {
 
 // ================== Functions ==========================
 
+void ignorar() {
+    struct sigaction sa;
+    sa.sa_handler = SIG_IGN;
+    sigemptyset(&sa.sa_mask);
+    sa.sa_flags = 0;
+
+    for (int i = 1; i <= 64; i++) {
+        if (i == SIGINT) {
+            continue;
+        }
+        if (sigaction(i, &sa, NULL) == -1) {
+            // Ignorar sinais que não são suportados
+            if (errno == EINVAL) {
+                continue;
+            }
+            perror("Erro a ignorar sinais");
+            exit(1);
+        }
+    }
+}
+
 void escreverLog(char *mensagem) {
     time_t my_time;
     struct tm *timeInfo;
@@ -731,6 +752,7 @@ int main(int argc, char *argv[]) {
 
     // ==================================== Install CTRL+C signal =============================================
     signal(SIGINT, terminateAll);
+    ignorar();
 
     // ===================================== Create the Semaphores ==========================================
     sem_unlink(SEM_NAME);
