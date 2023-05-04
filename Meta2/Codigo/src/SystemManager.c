@@ -19,7 +19,9 @@ Queue *queue;
 
 FILE *logFile;
 
-sem_t *semaforo, *semaforo_log, *semaforo_alerts;
+sem_t *semaforo, *semaforo_log, *semaforo_alerts, *semaforo_keys;
+
+pthread_mutex_t mutex = PTHREAD_MUTEX_INITIALIZER;
 
 int shmid;
 
@@ -49,9 +51,10 @@ void WorkerProcess(int id, int fd) {
         }
 
         if (r > 1) {
-            // Print the message
-            // sprintf(buf, "Worker %d received: %s\n", id, buffer);
-            // escreverLog(buf);
+            // Save in shared memory that worker is busy
+            sem_wait(semaforo);
+            sharedMemory->ocupados[id] = 1;
+            sem_post(semaforo);
 
             char aux[BUFF_SIZE * 4];
             strcpy(aux, buffer);
@@ -105,6 +108,7 @@ void WorkerProcess(int id, int fd) {
                 }
 
                 sem_post(semaforo);
+                sem_post(semaforo_keys);
 
             } else if (strncmp(token, "C", 1) == 0) {
                 // Parse the command
@@ -228,6 +232,11 @@ void WorkerProcess(int id, int fd) {
                             sharedMemory->alert_queue[i].min = atoi(args[3]);
                             sharedMemory->alert_queue[i].max = atoi(args[4]);
                             sharedMemory->alert_queue[i].consoleID = atoi(consoleID);
+
+                            if (i == 0) {
+                                sem_post(semaforo_alerts);
+                            }
+
                             break;
                         }
                     }
@@ -282,6 +291,11 @@ void WorkerProcess(int id, int fd) {
                             sharedMemory->alert_queue[i].min = 0;
                             sharedMemory->alert_queue[i].max = 0;
                             sharedMemory->alert_queue[i].consoleID = 0;
+
+                            if (i == 0) {
+                                sem_wait(semaforo_alerts);
+                            }
+
                             break;
                         }
                     }
@@ -301,7 +315,10 @@ void WorkerProcess(int id, int fd) {
                 }
             }
 
-            // Clear the buffer and the token
+            // Make the worker available again
+            sem_wait(semaforo);
+            sharedMemory->ocupados[id] = 0;
+            sem_post(semaforo);
         }
         memset(buffer, 0, sizeof(buffer));
         token = NULL;
@@ -320,6 +337,8 @@ void AlertsWatcherProcess(int id) {
     sem_post(semaforo_log);
 
     while (1) {
+        sem_wait(semaforo_alerts);
+
         for (int i = 0; i < ALERTS_SIZE; i++) {
             if (strcmp(sharedMemory->alert_queue[i].id, "") != 0) {
                 for (int j = 0; j < KEY_SIZE; j++) {
@@ -348,6 +367,8 @@ void AlertsWatcherProcess(int id) {
                 }
             }
         }
+
+        sem_post(semaforo_alerts);
     }
 }
 
@@ -397,13 +418,15 @@ void terminateAll() {
         // Close the message queue
         msgctl(msgqid, IPC_RMID, NULL);
 
-        // Close the semaphore
+        // Close the semaphores
         sem_close(semaforo);
         sem_unlink(SEM_NAME);
         sem_close(semaforo_log);
         sem_unlink(SEM_LOG_NAME);
         sem_close(semaforo_alerts);
         sem_unlink(SEM_ALERTS_NAME);
+
+        pthread_mutex_destroy(&mutex);
 
         fclose(logFile);
 
@@ -424,12 +447,15 @@ void addNodeToQueue(Queue *newNode) {
         return;
     }
 
-    // If the queue is not empty, add the node to the end of the queue
+    // If the queue is not empty, add the node to the queue. First the nodes with prioridade 9 and then the nodes with prioridade 1
     while (currentNode->next != NULL) {
+        if (currentNode->next->prioridade < newNode->prioridade) {
+            newNode->next = currentNode->next;
+            currentNode->next = newNode;
+            return;
+        }
         currentNode = currentNode->next;
     }
-
-    currentNode->next = newNode;
 }
 
 // Function to pop the first node of the queue
@@ -463,6 +489,13 @@ int createSharedMemory() {
     sem_wait(semaforo_log);
     escreverLog("Shared memory created\n");
     sem_post(semaforo_log);
+
+    sem_wait(semaforo);
+    // Initialize the ocupados array with 0 for the number of workers
+    for (int i = 0; i < config.num_workers; i++) {
+        sharedMemory->ocupados[i] = 0;
+    }
+    sem_post(semaforo);
 
     return 0;
 }
@@ -515,7 +548,9 @@ void *sensorReader() {
             newNode->valor = value;
             newNode->prioridade = 1;
 
+            pthread_mutex_lock(&mutex);
             addNodeToQueue(newNode);
+            pthread_mutex_unlock(&mutex);
 
             if (debug) {
                 printf("Queue:\n");
@@ -568,7 +603,9 @@ void *consoleReader() {
             strcpy(newNode->command, command);
             newNode->prioridade = 9;
 
+            pthread_mutex_lock(&mutex);
             addNodeToQueue(newNode);
+            pthread_mutex_unlock(&mutex);
 
             // if (debug) {
             //     printf("Queue:\n");
@@ -601,21 +638,19 @@ void *dispatcher(void *arg) {
         // If the queue is not empty
         if (queue != NULL) {
             // Get the first node of the queue
+            pthread_mutex_lock(&mutex);
             Queue *currentNode = popNodeFromQueue();
+            pthread_mutex_unlock(&mutex);
 
             if (currentNode != NULL) {
                 // If the node is a command
                 if (currentNode->prioridade == 9) {
-                    if (debug) {
-                        printf("Dispatcher:\n");
-                        printf("Command: %s\n", currentNode->command);
-                    }
-
                     // Write to a random worker unnamed pipe
                     int randomWorker = rand() % config.num_workers;
 
-                    if (debug) {
-                        printf("Random Worker: %d\n", randomWorker);
+                    // Check if the worker is busy
+                    while (sharedMemory->ocupados[randomWorker] == 1) {
+                        randomWorker = rand() % config.num_workers;
                     }
 
                     char message[BUFF_SIZE * 4];
@@ -700,19 +735,25 @@ int main(int argc, char *argv[]) {
     // ===================================== Create the Semaphores ==========================================
     sem_unlink(SEM_NAME);
     if ((semaforo = sem_open(SEM_NAME, O_CREAT | O_EXCL, 0777, 1)) == SEM_FAILED) {
-        perror("Error creating semaphore");
+        perror("Error creating shm semaphore");
         terminateAll();
     }
 
     sem_unlink(SEM_LOG_NAME);
     if ((semaforo_log = sem_open(SEM_LOG_NAME, O_CREAT | O_EXCL, 0777, 1)) == SEM_FAILED) {
-        perror("Error creating semaphore");
+        perror("Error creating log semaphore");
         terminateAll();
     }
 
     sem_unlink(SEM_ALERTS_NAME);
-    if ((semaforo_alerts = sem_open(SEM_ALERTS_NAME, O_CREAT | O_EXCL, 0777, 1)) == SEM_FAILED) {
-        perror("Error creating semaphore");
+    if ((semaforo_alerts = sem_open(SEM_ALERTS_NAME, O_CREAT | O_EXCL, 0777, 0)) == SEM_FAILED) {
+        perror("Error creating alerts semaphore");
+        terminateAll();
+    }
+
+    sem_unlink(SEM_KEY_NAME);
+    if ((semaforo_keys = sem_open(SEM_KEY_NAME, O_CREAT | O_EXCL, 0777, 0)) == SEM_FAILED) {
+        perror("Error creating keys semaphore");
         terminateAll();
     }
 

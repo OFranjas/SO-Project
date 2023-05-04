@@ -23,7 +23,7 @@
 //     int fd_console_pipe, fd_sensor_pipe;
 
 // } Global;
-
+#define MAX_WORKERS 999
 #define MAX_STRING_SIZE 32
 #define MIN_STRING_SIZE 3
 #define BUFF_SIZE 2048
@@ -33,6 +33,7 @@
 #define SEM_NAME "Semaforo"
 #define SEM_LOG_NAME "SemaforoLog"
 #define SEM_ALERTS_NAME "SemaforoAlerts"
+#define SEM_KEY_NAME "SemaforoKey"
 
 typedef struct config_struct {
     int queue_size;
@@ -86,6 +87,7 @@ typedef struct shared_memory_struct {
     KeyQueue key_queue[KEY_SIZE];
     AlertQueue alert_queue[KEY_SIZE];
 
+    int ocupados[MAX_WORKERS];
 } SharedMemory;
 
 extern Config config;
