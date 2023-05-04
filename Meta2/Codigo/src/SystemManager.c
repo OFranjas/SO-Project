@@ -1,4 +1,4 @@
-#include "lib/header.h"
+#include "header.h"
 
 // ================== Variables ==========================
 
@@ -17,7 +17,9 @@ SharedMemory *sharedMemory;
 
 Queue *queue;
 
-sem_t *semaforo;
+FILE *logFile;
+
+sem_t *semaforo, *semaforo_log, *semaforo_alerts;
 
 int shmid;
 
@@ -29,12 +31,15 @@ void WorkerProcess(int id, int fd) {
     char buf[BUFF_SIZE * 10];
     sprintf(buf, "Worker process ID %d created\n", id);
 
+    sem_wait(semaforo_log);
     escreverLog(buf);
+    sem_post(semaforo_log);
 
     while (1) {
         // Read from the pipe
         char buffer[BUFF_SIZE * 4];
         char *token;
+        Message msg;
 
         int r = read(fd, buffer, sizeof(buffer));
 
@@ -45,21 +50,8 @@ void WorkerProcess(int id, int fd) {
 
         if (r > 1) {
             // Print the message
-            sprintf(buf, "Worker %d received: %s\n", id, buffer);
-            escreverLog(buf);
-
-            // Send the message to the console
-            Message msg;
-            msg.type = 1;
-            strcpy(msg.content, buf);
-
-            if (msgsnd(msgqid, &msg, sizeof(msg) - sizeof(long), 0) == -1) {
-                perror("msgsnd");
-                printf("Content: %s\n", msg.content);
-                exit(1);
-            }
-
-            printf("Message sent to console\n");
+            // sprintf(buf, "Worker %d received: %s\n", id, buffer);
+            // escreverLog(buf);
 
             char aux[BUFF_SIZE * 4];
             strcpy(aux, buffer);
@@ -67,7 +59,7 @@ void WorkerProcess(int id, int fd) {
             // Parse the message to check if it's from a sensor or a console
             token = strtok(aux, ";");
 
-            printf("Token: %s\n", token);
+            // printf("Token: %s\n", token);
 
             if (strcmp(token, "S") == 0) {
                 // Parse the message ID#key#value
@@ -77,14 +69,14 @@ void WorkerProcess(int id, int fd) {
                 char *key = strtok(NULL, "#");
                 char *value = strtok(NULL, "#");
 
-                printf("Key: %s\n", key);
+                // printf("Key: %s\n", key);
 
                 sem_wait(semaforo);
 
                 // Add to the key queue
                 for (int i = 0; i < KEY_SIZE; i++) {
                     if (strcmp(sharedMemory->key_queue[i].chave, key) == 0) {
-                        printf("AQUI2\n");
+                        // printf("AQUI2\n");
                         sharedMemory->key_queue[i].last = atoi(value);
                         sharedMemory->key_queue[i].count++;
                         sharedMemory->key_queue[i].media = (sharedMemory->key_queue[i].media + atoi(value)) / sharedMemory->key_queue[i].count;
@@ -99,7 +91,7 @@ void WorkerProcess(int id, int fd) {
 
                         break;
                     } else if (strcmp(sharedMemory->key_queue[i].chave, "") == 0) {
-                        printf("AQUI3\n");
+                        // printf("AQUI3\n");
                         strcpy(sharedMemory->key_queue[i].chave, key);
                         strcpy(sharedMemory->key_queue[i].ID, sensorID);
                         sharedMemory->key_queue[i].last = atoi(value);
@@ -118,26 +110,31 @@ void WorkerProcess(int id, int fd) {
                 // Parse the command
                 token = strtok(NULL, ";");
 
-                printf("Command: %s\n", token);
+                // printf("Token: %s\n", token);
+
+                char *consoleID = strtok(NULL, ";");
+
+                // printf("Console ID: %s\n", consoleID);
+
+                msg.type = atoi(consoleID);
 
                 // If the command is "stats", print the key queue
                 if (strcmp(token, "stats") == 0) {
                     sem_wait(semaforo);
 
-                    // Send the message to the console with format "key last min max media count"
-                    Message msg;
-                    msg.type = 1;
-
+                    // Print Key Queue with format -> key last min max media count
                     for (int i = 0; i < KEY_SIZE; i++) {
                         if (strcmp(sharedMemory->key_queue[i].chave, "") != 0) {
-                            sprintf(msg.content, "%s %d %d %d %f %d", sharedMemory->key_queue[i].chave, sharedMemory->key_queue[i].last, sharedMemory->key_queue[i].min, sharedMemory->key_queue[i].max, sharedMemory->key_queue[i].media, sharedMemory->key_queue[i].count);
+                            sprintf(msg.content, "%s %d %d %d %.2f %d", sharedMemory->key_queue[i].chave, sharedMemory->key_queue[i].last, sharedMemory->key_queue[i].min, sharedMemory->key_queue[i].max, sharedMemory->key_queue[i].media, sharedMemory->key_queue[i].count);
 
-                            if (msgsnd(msgqid, &msg, sizeof(msg), 0) == -1) {
+                            if (msgsnd(msgqid, &msg, sizeof(msg) - sizeof(long), 0) == -1) {
                                 perror("msgsnd");
+                                printf("Message: %s\n", msg.content);
+                                printf("Message size: %ld\n", sizeof(msg) - sizeof(long));
+                                printf("Message type: %ld\n", msg.type);
+                                printf("Msqid: %d\n", msgqid);
                                 exit(1);
                             }
-
-                            printf("Message sent to console\n");
                         }
                     }
 
@@ -158,8 +155,6 @@ void WorkerProcess(int id, int fd) {
                     sem_post(semaforo);
 
                     if (empty) {
-                        Message msg;
-                        msg.type = 1;
                         strcpy(msg.content, "ERROR");
 
                         if (msgsnd(msgqid, &msg, sizeof(msg) - sizeof(long), 0) == -1) {
@@ -186,8 +181,6 @@ void WorkerProcess(int id, int fd) {
 
                     // Send the message to the console
 
-                    Message msg;
-                    msg.type = 1;
                     strcpy(msg.content, "OK");
 
                     if (msgsnd(msgqid, &msg, sizeof(msg) - sizeof(long), 0) == -1) {
@@ -198,9 +191,6 @@ void WorkerProcess(int id, int fd) {
                 } else if (strcmp(token, "sensors") == 0) {
                     // Print the key queus chave
                     sem_wait(semaforo);
-
-                    Message msg;
-                    msg.type = 1;
 
                     for (int i = 0; i < KEY_SIZE; i++) {
                         if (strcmp(sharedMemory->key_queue[i].chave, "") != 0) {
@@ -213,6 +203,100 @@ void WorkerProcess(int id, int fd) {
 
                             // printf("Message sent to console\n");
                         }
+                    }
+
+                    sem_post(semaforo);
+                } else if (strncmp(token, "add_alert", strlen("add_alert")) == 0) {
+                    // Separar o token em argumentos
+                    token = strtok(token, " ");
+                    char *args[5];
+                    int i = 0;
+
+                    while (token != NULL) {
+                        args[i] = token;
+                        token = strtok(NULL, " ");
+                        i++;
+                    }
+
+                    // Adicionar à alert queue
+                    sem_wait(semaforo);
+
+                    for (i = 0; i < ALERTS_SIZE; i++) {
+                        if (strcmp(sharedMemory->alert_queue[i].id, "") == 0) {
+                            strcpy(sharedMemory->alert_queue[i].id, args[1]);
+                            strcpy(sharedMemory->alert_queue[i].chave, args[2]);
+                            sharedMemory->alert_queue[i].min = atoi(args[3]);
+                            sharedMemory->alert_queue[i].max = atoi(args[4]);
+                            sharedMemory->alert_queue[i].consoleID = atoi(consoleID);
+                            break;
+                        }
+                    }
+
+                    sem_post(semaforo);
+
+                    Message msg;
+                    msg.type = atoi(consoleID);
+
+                    // Send the message to the console
+                    strcpy(msg.content, "OK");
+
+                    if (msgsnd(msgqid, &msg, sizeof(msg) - sizeof(long), 0) == -1) {
+                        perror("msgsnd");
+                        exit(1);
+                    }
+
+                    // printf("Message sent to console: %s\n", msg.content);
+
+                } else if (strcmp(token, "list_alerts") == 0) {
+                    sem_wait(semaforo);
+                    for (int i = 0; i < ALERTS_SIZE; i++) {
+                        Message msg;
+                        msg.type = atoi(consoleID);
+                        if (strcmp(sharedMemory->alert_queue[i].id, "") != 0) {
+                            sprintf(msg.content, "%s %s %d %d", sharedMemory->alert_queue[i].id, sharedMemory->alert_queue[i].chave, sharedMemory->alert_queue[i].min, sharedMemory->alert_queue[i].max);
+                            if (msgsnd(msgqid, &msg, sizeof(msg) - sizeof(long), 0) == -1) {
+                                perror("msgsnd");
+                                exit(1);
+                            }
+                        }
+                    }
+                    sem_post(semaforo);
+                } else if (strncmp(token, "remove_alert", strlen("remove-alert")) == 0) {
+                    // Remove the alert from the alert queue
+                    token = strtok(token, " ");
+                    char *args[2];
+                    int i = 0;
+
+                    while (token != NULL) {
+                        args[i] = token;
+                        token = strtok(NULL, " ");
+                        i++;
+                    }
+
+                    sem_wait(semaforo);
+
+                    for (i = 0; i < ALERTS_SIZE; i++) {
+                        if (strcmp(sharedMemory->alert_queue[i].id, args[1]) == 0) {
+                            strcpy(sharedMemory->alert_queue[i].id, "");
+                            strcpy(sharedMemory->alert_queue[i].chave, "");
+                            sharedMemory->alert_queue[i].min = 0;
+                            sharedMemory->alert_queue[i].max = 0;
+                            sharedMemory->alert_queue[i].consoleID = 0;
+                            break;
+                        }
+                    }
+
+                    sem_post(semaforo);
+
+                    Message msg;
+                    msg.type = atoi(consoleID);
+
+                    // Send the message to the console
+                    strcpy(msg.content, "OK");
+
+                    if (msgsnd(msgqid, &msg, sizeof(msg) - sizeof(long), 0) == -1) {
+                        perror("msgsnd");
+                        exit(1);
                     }
                 }
             }
@@ -229,26 +313,78 @@ void AlertsWatcherProcess(int id) {
     char buf[64];
     sprintf(buf, "Alerts watcher process ID %d created\n", id);
 
+    int printed;
+
+    sem_wait(semaforo_log);
     escreverLog(buf);
+    sem_post(semaforo_log);
+
+    while (1) {
+        for (int i = 0; i < ALERTS_SIZE; i++) {
+            if (strcmp(sharedMemory->alert_queue[i].id, "") != 0) {
+                for (int j = 0; j < KEY_SIZE; j++) {
+                    if (strcmp(sharedMemory->key_queue[j].chave, sharedMemory->alert_queue[i].chave) == 0) {
+                        if (printed == sharedMemory->key_queue[j].last) {
+                            continue;
+                        }
+
+                        if (sharedMemory->key_queue[j].last < sharedMemory->alert_queue[i].min || sharedMemory->key_queue[j].last > sharedMemory->alert_queue[i].max) {
+                            Message msg;
+                            msg.type = sharedMemory->alert_queue[i].consoleID;
+                            sprintf(msg.content, "ALERT %s (%s %d to %d) TRIGGERED", sharedMemory->alert_queue[i].id, sharedMemory->key_queue[j].chave, sharedMemory->alert_queue[i].min, sharedMemory->alert_queue[i].max);
+
+                            if (msgsnd(msgqid, &msg, sizeof(msg) - sizeof(long), 0) == -1) {
+                                perror("msgsnd");
+                                exit(1);
+                            }
+
+                            sem_wait(semaforo_log);
+                            escreverLog(msg.content);
+                            sem_post(semaforo_log);
+
+                            printed = sharedMemory->key_queue[j].last;
+                        }
+                    }
+                }
+            }
+        }
+    }
 }
+
 // ================== Functions ==========================
+
+void escreverLog(char *mensagem) {
+    time_t my_time;
+    struct tm *timeInfo;
+    time(&my_time);
+    timeInfo = localtime(&my_time);
+
+    // Write the message to the log file with the date before with the format: "HH:MM:SS MESSAGE"
+    if (fprintf(logFile, "%d:%d:%d -> %s\n", timeInfo->tm_hour, timeInfo->tm_min, timeInfo->tm_sec, mensagem) < 0) {
+        perror("Error writing to log file");
+        exit(1);
+    } else {
+        fflush(logFile);
+    }
+
+    // Print the message to the console
+    printf("%d:%d:%d -> %s\n", timeInfo->tm_hour, timeInfo->tm_min, timeInfo->tm_sec, mensagem);
+}
 
 void terminateAll() {
     if (parentPID == getpid()) {
+        sem_wait(semaforo_log);
+        escreverLog("Terminating Program\n");
+        sem_post(semaforo_log);
+
         // Terminate the shared memory
         shmdt(sharedMemory);
         shmctl(shmid, IPC_RMID, 0);
-
-        if (debug)
-            escreverLog("Shared memory terminated\n");
 
         // Terminate the threads
         pthread_cancel(sensorReaderThread);
         pthread_cancel(consoleReaderThread);
         pthread_cancel(dispatcherThread);
-
-        if (debug)
-            escreverLog("Threads terminated\n");
 
         // Wait for the worker processes to terminate
         for (int i = 1; i < config.num_workers + 1; i++) {
@@ -264,11 +400,12 @@ void terminateAll() {
         // Close the semaphore
         sem_close(semaforo);
         sem_unlink(SEM_NAME);
+        sem_close(semaforo_log);
+        sem_unlink(SEM_LOG_NAME);
+        sem_close(semaforo_alerts);
+        sem_unlink(SEM_ALERTS_NAME);
 
-        if (debug)
-            escreverLog("Processes terminated\n");
-
-        escreverLog("Program terminated\n");
+        fclose(logFile);
 
         exit(0);
     } else {
@@ -313,29 +450,32 @@ Queue *popNodeFromQueue() {
 int createSharedMemory() {
     // Create the shared memory
     if ((shmid = shmget(IPC_PRIVATE, sizeof(sharedMemory) + sizeof(sharedMemory->key_queue) * config.max_keys, IPC_CREAT | 0777)) == -1) {
-        escreverLog("shmget() error\n");
+        perror("shmget() error\n");
         return 1;
     }
 
     // Attach the shared memory
     if ((sharedMemory = shmat(shmid, NULL, 0)) < 0) {
-        escreverLog("shmat() error\n");
+        perror("shmat() error\n");
         return 1;
     }
 
+    sem_wait(semaforo_log);
     escreverLog("Shared memory created\n");
+    sem_post(semaforo_log);
 
     return 0;
 }
 
 void *sensorReader() {
+    sem_wait(semaforo_log);
     escreverLog("Sensor Reader Thread Started\n");
+    sem_post(semaforo_log);
 
     int fd_sensor_pipe;
 
     // Open the pipe
     if ((fd_sensor_pipe = open("sensorPipe", O_RDONLY)) < 0) {
-        escreverLog("Error opening sensor_pipe\n");
         perror("Error opening sensor_pipe");
     }
 
@@ -400,13 +540,14 @@ void *sensorReader() {
 }
 
 void *consoleReader() {
+    sem_wait(semaforo_log);
     escreverLog("Console Reader Thread Started\n");
+    sem_post(semaforo_log);
 
     int fd_console_pipe;
 
     // Open the pipe
     if ((fd_console_pipe = open("consolePipe", O_RDONLY)) < 0) {
-        escreverLog("Error opening console_pipe\n");
         perror("Error opening console_pipe");
     }
 
@@ -449,7 +590,9 @@ void *consoleReader() {
 }
 
 void *dispatcher(void *arg) {
+    sem_wait(semaforo_log);
     escreverLog("Dispatcher Thread Started\n");
+    sem_post(semaforo_log);
 
     // Get the argument fd_unnamed_pipe[config.num_workers][2]
     int(*fd_unnamed_pipe)[2] = (int(*)[2])arg;
@@ -480,7 +623,6 @@ void *dispatcher(void *arg) {
 
                     // Write to the worker
                     if (write(fd_unnamed_pipe[randomWorker][1], message, sizeof(currentNode->command)) < 0) {
-                        escreverLog("Error writing to worker\n");
                         perror("Error writing to worker");
                     }
                 }
@@ -509,7 +651,6 @@ void *dispatcher(void *arg) {
 
                     // Write to the worker
                     if (write(fd_unnamed_pipe[randomWorker][1], message, sizeof(message)) < 0) {
-                        escreverLog("Error writing to worker\n");
                         perror("Error writing to worker");
                     }
                 }
@@ -544,40 +685,54 @@ int main(int argc, char *argv[]) {
         printf("Error: Invalid number of parameters\n");
         return 0;
     }
-    if (debug)
-        escreverLog("System Manager Started\n");
 
     parentPID = getpid();
+
+    // ==================================== Open Log File ====================================================
+    if ((logFile = fopen("log.txt", "a")) == NULL) {
+        perror("Error opening file\n");
+        exit(0);
+    }
 
     // ==================================== Install CTRL+C signal =============================================
     signal(SIGINT, terminateAll);
 
+    // ===================================== Create the Semaphores ==========================================
+    sem_unlink(SEM_NAME);
+    if ((semaforo = sem_open(SEM_NAME, O_CREAT | O_EXCL, 0777, 1)) == SEM_FAILED) {
+        perror("Error creating semaphore");
+        terminateAll();
+    }
+
+    sem_unlink(SEM_LOG_NAME);
+    if ((semaforo_log = sem_open(SEM_LOG_NAME, O_CREAT | O_EXCL, 0777, 1)) == SEM_FAILED) {
+        perror("Error creating semaphore");
+        terminateAll();
+    }
+
+    sem_unlink(SEM_ALERTS_NAME);
+    if ((semaforo_alerts = sem_open(SEM_ALERTS_NAME, O_CREAT | O_EXCL, 0777, 1)) == SEM_FAILED) {
+        perror("Error creating semaphore");
+        terminateAll();
+    }
+
     // ==================================== Read the configuration file ======================================
 
     if (readConfigFile(argv[1])) {
-        escreverLog("ERROR READING CONFIG FILE\n");
+        perror("ERROR READING CONFIG FILE\n");
         return 0;
     }
 
     // ================================ Create and attach the shared memory ==================================
 
     if (createSharedMemory()) {
-        escreverLog("ERROR CREATING SHARED MEMORY\n");
-        terminateAll();
-    }
-
-    // ===================================== Create the Semaphores ==========================================
-    sem_unlink(SEM_NAME);
-    if ((semaforo = sem_open(SEM_NAME, O_CREAT | O_EXCL, 0777, 1)) == SEM_FAILED) {
-        escreverLog("Error creating semaphore\n");
-        perror("Error creating semaphore");
+        perror("ERROR CREATING SHARED MEMORY\n");
         terminateAll();
     }
 
     // ===================================== Create the Message Queue ========================================
     key_t key = ftok(".", MSQ_KEY);
     if ((msgqid = msgget(key, IPC_CREAT | 0777)) < 0) {
-        escreverLog("Error creating message queue\n");
         perror("Error creating message queue");
         terminateAll();
     }
@@ -588,14 +743,12 @@ int main(int argc, char *argv[]) {
 
     // Console Pipe
     if ((mkfifo("consolePipe", O_CREAT | O_EXCL | 0777) < 0 && errno != EEXIST)) {
-        escreverLog("Error creating Console Pipe\n");
         perror("Error creating Console Pipe");
         terminateAll();
     }
 
     // Sensor Pipe
     if ((mkfifo("sensorPipe", O_CREAT | O_EXCL | 0777) < 0 && errno != EEXIST)) {
-        escreverLog("Error creating Sensor Pipe\n");
         perror("Error creating Sensor Pipe");
         terminateAll();
     }
@@ -605,7 +758,6 @@ int main(int argc, char *argv[]) {
 
     for (int i = 0; i < config.num_workers; i++) {
         if (pipe(fd_unnamed_pipe[i]) == -1) {
-            escreverLog("Error creating Unnamed Pipe\n");
             perror("Error creating Unnamed Pipe");
             terminateAll();
         }
@@ -627,7 +779,7 @@ int main(int argc, char *argv[]) {
             exit(0);
 
         } else {
-            escreverLog("Error creating Worker Process\n");
+            perror("Error creating Worker Process\n");
             terminateAll();
         }
     }
@@ -645,7 +797,6 @@ int main(int argc, char *argv[]) {
         exit(0);
 
     } else {
-        escreverLog("Error creating Alerts Watcher Process\n");
         perror("Error creating Alerts Watcher Process");
         terminateAll();
     }
@@ -654,19 +805,16 @@ int main(int argc, char *argv[]) {
 
     // Create Sensor Reader, Console Reader and Dispatcher threads
     if (pthread_create(&sensorReaderThread, NULL, sensorReader, NULL) != 0) {
-        escreverLog("Error creating Sensor Reader Thread\n");
         perror("Error creating Sensor Reader Thread");
         terminateAll();
     }
 
     if (pthread_create(&consoleReaderThread, NULL, consoleReader, NULL) != 0) {
-        escreverLog("Error creating Console Reader Thread\n");
         perror("Error creating Console Reader Thread");
         terminateAll();
     }
 
     if (pthread_create(&dispatcherThread, NULL, dispatcher, fd_unnamed_pipe) != 0) {
-        escreverLog("Error creating Dispatcher Thread\n");
         perror("Error creating Dispatcher Thread");
         terminateAll();
     }

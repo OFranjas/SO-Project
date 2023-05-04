@@ -1,10 +1,10 @@
 CFLAGS = -g -Wall -pthread
 CC = gcc
-OBJS1 = SystemManager.o Config.o Log.o Worker.o AlertsWatcher.o Functions.o
+OBJS1 = SystemManager.o Config.o
 PROG1 = SystemManager
-OBJS2 = Sensor.o Log.o Functions.o
+OBJS2 = Sensor.o
 PROG2 = Sensor
-OBJS3 = UserConsole.o Log.o Functions.o
+OBJS3 = UserConsole.o
 PROG3 = UserConsole
 
 all: $(PROG1) $(PROG2) $(PROG3) clean
@@ -23,18 +23,6 @@ SystemManager.o: src/SystemManager.c
 
 Config.o: src/Config.c
 	$(CC) $(CFLAGS) -c src/Config.c
-
-Log.o: src/Log.c
-	$(CC) $(CFLAGS) -c src/Log.c
-
-Worker.o: src/Worker.c
-	$(CC) $(CFLAGS) -c src/Worker.c
-
-AlertsWatcher.o: src/AlertsWatcher.c
-	$(CC) $(CFLAGS) -c src/AlertsWatcher.c	
-
-Functions.o: src/Functions.c
-	$(CC) $(CFLAGS) -c src/Functions.c
 
 Sensor.o: src/Sensor.c
 	$(CC) $(CFLAGS) -c src/Sensor.c

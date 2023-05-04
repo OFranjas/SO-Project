@@ -1,4 +1,4 @@
-#include "lib/header.h"
+#include "header.h"
 
 Config config;
 

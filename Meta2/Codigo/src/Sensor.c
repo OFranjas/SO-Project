@@ -1,4 +1,4 @@
-#include "lib/header.h"
+#include "header.h"
 
 /*
 - Ler os comandos da linha de comandos e validar (IDs têm de ser strings e têm tamanho específico)
@@ -33,7 +33,6 @@ int main(int argc, char *argv[]) {
 
     // ================== Abrir Named Pipe ==========================
     if ((fd_sensor_pipe = open("sensorPipe", O_WRONLY)) < 0) {
-        escreverLog("Error opening sensor_pipe\n");
         perror("Error opening sensor_pipe");
     }
 
@@ -91,7 +90,6 @@ int main(int argc, char *argv[]) {
         sprintf(string, "%s#%s#%d", sensorId, key, random);
 
         // Enviar a string para a fila de mensagens
-        escreverLog(string);
         write(fd_sensor_pipe, string, strlen(string));
 
         counter++;

@@ -28,8 +28,11 @@
 #define MIN_STRING_SIZE 3
 #define BUFF_SIZE 2048
 #define KEY_SIZE 4096
-#define MSQ_KEY 0x1234
+#define ALERTS_SIZE 4096
+#define MSQ_KEY 0x4209
 #define SEM_NAME "Semaforo"
+#define SEM_LOG_NAME "SemaforoLog"
+#define SEM_ALERTS_NAME "SemaforoAlerts"
 
 typedef struct config_struct {
     int queue_size;
@@ -41,7 +44,7 @@ typedef struct config_struct {
 
 typedef struct message {
     long type;
-    char content[BUFF_SIZE * 5];
+    char content[BUFF_SIZE * 3];
 
 } Message;
 
@@ -69,8 +72,19 @@ typedef struct key_queue {
 
 } KeyQueue;
 
+typedef struct alert_queue {
+    char id[BUFF_SIZE];
+    char chave[BUFF_SIZE];
+    int min;
+    int max;
+
+    int consoleID;
+
+} AlertQueue;
+
 typedef struct shared_memory_struct {
     KeyQueue key_queue[KEY_SIZE];
+    AlertQueue alert_queue[KEY_SIZE];
 
 } SharedMemory;
 
@@ -80,7 +94,11 @@ extern SharedMemory *sharedMemory;
 
 extern Queue *queue;
 
+extern FILE *logFile;
+
 extern int debug;
+
+extern sem_t *semaforo_log;
 
 int readConfigFile(char *filename);
 

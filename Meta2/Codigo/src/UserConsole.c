@@ -1,11 +1,11 @@
-#include "lib/header.h"
+#include "header.h"
 /*
 - Menu para ler comandos
 */
 
 int fd_console_pipe;
 
-int debug = 1;
+int debug = 0;
 
 int msgqid;
 
@@ -48,7 +48,7 @@ void *reader() {
     while (1) {
         // Ler da Message Queue
         if (msgrcv(msgqid, &buffer, sizeof(buffer), consoleID, 0) < 0) {
-            escreverLog("Error reading from Message Queue\n");
+            perror("Error reading from Message Queue\n");
             return NULL;
         }
         // Escrever no ecrã
@@ -72,22 +72,21 @@ int main(int argc, char *argv[]) {
 
     consoleID = atoi(argv[1]);
 
-    printf("Console ID: %d\n", consoleID);
+    // printf("Console ID: %d\n", consoleID);
 
     // =================== Abrir Named Pipe ===================
 
     if ((fd_console_pipe = open("consolePipe", O_WRONLY | O_NONBLOCK)) < 0) {
-        escreverLog("Error opening Console Pipe\n");
+        perror("Error opening Console Pipe\n");
         return 1;
     }
 
     // =================== Abrir Message Queue ===================
 
-    key_t key;
-    key = ftok(".", MSQ_KEY);
+    key_t key = ftok(".", MSQ_KEY);
 
     if ((msgqid = msgget(key, 0660)) < 0) {
-        escreverLog("Error opening Message Queue\n");
+        perror("Error opening Message Queue\n");
         return 1;
     }
 
@@ -95,15 +94,16 @@ int main(int argc, char *argv[]) {
     pthread_t reader_thread;
 
     if (pthread_create(&reader_thread, NULL, reader, NULL) != 0) {
-        escreverLog("Error creating reader thread\n");
+        perror("Error creating reader thread\n");
         return 1;
     }
 
     // =================== Ler comandos ===================
-    char command[64];
+    char command[1024];
     char *token;
     char *args[64];
     int i = 0;
+    char aux[4096];
 
     while (1) {
         printf(">> ");
@@ -124,25 +124,30 @@ int main(int argc, char *argv[]) {
         } else if (strcmp(command, "stats") == 0) {
             printf("Key Last Min Max Avg Count\n");
 
-            write(fd_console_pipe, "stats", sizeof("stats"));
+            sprintf(aux, "stats;%d", consoleID);
+
+            write(fd_console_pipe, aux, strlen(aux));
 
         } else if (strcmp(command, "reset") == 0) {
-            write(fd_console_pipe, "reset", sizeof("reset"));
+            sprintf(aux, "reset;%d", consoleID);
+            write(fd_console_pipe, aux, strlen(aux));
 
         } else if (strcmp(command, "sensors") == 0) {
-            write(fd_console_pipe, "sensors", sizeof("sensors"));
+            sprintf(aux, "sensors;%d", consoleID);
+            write(fd_console_pipe, aux, strlen(aux));
 
         } else if (strcmp(command, "list_alerts") == 0) {
             printf("ID Key MIN MAX\n");
 
-            write(fd_console_pipe, "list_alerts", sizeof("list_alerts"));
+            sprintf(aux, "list_alerts;%d", consoleID);
+
+            write(fd_console_pipe, aux, strlen(aux));
 
         } else if (strncmp(command, "add_alert", 9) == 0) {
-            char aux[64];
             strcpy(aux, command);
 
             // Separar o input em tokens
-            token = strtok(command, " ");
+            token = strtok(aux, " ");
 
             i = 0;
 
@@ -162,14 +167,17 @@ int main(int argc, char *argv[]) {
                 continue;
             }
 
-            write(fd_console_pipe, aux, sizeof(aux));
+            sprintf(aux, "%s;%d", command, consoleID);
+
+            // printf("Aux: %s\n", aux);
+
+            write(fd_console_pipe, aux, strlen(aux));
 
         } else if (strncmp(command, "remove_alert", 12) == 0) {
-            char aux[64];
             strcpy(aux, command);
 
             // Separar o input em tokens
-            token = strtok(command, " ");
+            token = strtok(aux, " ");
 
             i = 0;
 
@@ -197,11 +205,19 @@ int main(int argc, char *argv[]) {
 
             // * TODO Fazer o suposto
 
-            write(fd_console_pipe, aux, sizeof(aux));
+            sprintf(aux, "%s;%d", command, consoleID);
+
+            write(fd_console_pipe, aux, strlen(aux));
 
         } else {
             printf("Comando inválido. Tente novamente.\n");
         }
+
+        bzero(command, sizeof(command));
+
+        bzero(aux, sizeof(aux));
+
+        bzero(args, sizeof(args));
     }
 
     return 0;

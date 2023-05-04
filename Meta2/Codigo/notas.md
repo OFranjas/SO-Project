@@ -7,6 +7,9 @@
 - [ ] Printar lista de keys
 
 
+Para ver se workers tao livres
+Printar comando errado
+
 # Codigo Gameiro
 ```
 sudo mount -t drvfs C: /mnt/c -o metadata,uid=1000,gid=1000,umask=22,fmask=111
