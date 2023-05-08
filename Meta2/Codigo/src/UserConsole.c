@@ -109,7 +109,7 @@ int main(int argc, char *argv[]) {
         perror("Error opening Message Queue\n");
         return 1;
     }
-
+    
     // =================== Criar thread para ler da Message Queue ===================
     pthread_t reader_thread;
 

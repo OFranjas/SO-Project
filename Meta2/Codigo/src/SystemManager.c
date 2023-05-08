@@ -480,6 +480,18 @@ void AlertsWatcherProcess(int id) {
 
 // ================== Functions ==========================
 
+void clearQueue() {
+    Queue *currentNode = queue;
+
+    while (currentNode != NULL) {
+        Queue *aux = currentNode;
+        currentNode = currentNode->next;
+        free(aux);
+    }
+
+    queue = NULL;
+}
+
 void ignorar() {
     struct sigaction sa;
     sa.sa_handler = SIG_IGN;
@@ -546,6 +558,9 @@ void terminateAll() {
         // Close the message queue
         msgctl(msgqid, IPC_RMID, NULL);
 
+        // Clear the internal queue
+        clearQueue();
+
         sem_wait(semaforo_log);
         escreverLog("HOME_IOT SIMULATOR CLOSING\n");
         sem_post(semaforo_log);
@@ -569,7 +584,6 @@ void terminateAll() {
     }
 }
 
-// Function to add a new node to the queue
 void addNodeToQueue(Queue *newNode) {
     Queue *currentNode = queue;
 
@@ -590,7 +604,6 @@ void addNodeToQueue(Queue *newNode) {
     }
 }
 
-// Function to pop the first node of the queue
 Queue *popNodeFromQueue() {
     Queue *currentNode = queue;
 
