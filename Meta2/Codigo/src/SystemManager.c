@@ -2,11 +2,9 @@
 
 // ================== Variables ==========================
 
-// Processes IDs
 int processIDs[10];
 int alertsWatcherID;
 
-// Threads
 pthread_t sensorReaderThread, consoleReaderThread, dispatcherThread;
 
 int debug = 0;
@@ -28,6 +26,7 @@ int shmid;
 int msgqid;
 
 // ================== Processes ==========================
+
 void WorkerProcess(int id, int fd) {
     // Create String with the process ID
     char buf[BUFF_SIZE * 10];
@@ -73,6 +72,7 @@ void WorkerProcess(int id, int fd) {
                 char *value = strtok(NULL, "#");
 
                 // printf("Key: %s\n", key);
+                printf("ID: %s\n", sensorID);
 
                 // Verify if key queue is full
                 sem_wait(semaforo);
@@ -121,6 +121,16 @@ void WorkerProcess(int id, int fd) {
                         sharedMemory->key_queue[i].min = atoi(value);
                         sharedMemory->key_queue[i].max = atoi(value);
 
+                        break;
+                    }
+                }
+
+                // Add sensor ID to the sensor queue
+                for (int i = 0; i < config.max_keys; i++) {
+                    if (strcmp(sharedMemory->sensor_queue[i].id, sensorID) == 0) {
+                        break;
+                    } else if (strcmp(sharedMemory->sensor_queue[i].id, "") == 0) {
+                        strcpy(sharedMemory->sensor_queue[i].id, sensorID);
                         break;
                     }
                 }
@@ -243,16 +253,15 @@ void WorkerProcess(int id, int fd) {
                     // Print the key queus chave
                     sem_wait(semaforo);
 
+                    // Print the sensor queue
                     for (int i = 0; i < config.max_keys; i++) {
-                        if (strcmp(sharedMemory->key_queue[i].chave, "") != 0) {
-                            sprintf(msg.content, "%s", sharedMemory->key_queue[i].chave);
+                        if (strcmp(sharedMemory->sensor_queue[i].id, "") != 0) {
+                            sprintf(msg.content, "%s", sharedMemory->sensor_queue[i].id);
 
-                            if (msgsnd(msgqid, &msg, sizeof(msg), 0) == -1) {
+                            if (msgsnd(msgqid, &msg, sizeof(msg) - sizeof(long), 0) == -1) {
                                 perror("msgsnd");
                                 exit(1);
                             }
-
-                            // printf("Message sent to console\n");
                         }
                     }
 
@@ -435,7 +444,7 @@ void WorkerProcess(int id, int fd) {
     }
 }
 
-void AlertsWatcherProcess(int id) {
+void AlertsWatcherProcess() {
     int printed;
 
     sem_wait(semaforo_log);
@@ -446,6 +455,8 @@ void AlertsWatcherProcess(int id) {
         sem_wait(semaforo_alerts);
 
         for (int i = 0; i < config.max_alerts; i++) {
+            sem_wait(semaforo);
+
             if (strcmp(sharedMemory->alert_queue[i].id, "") != 0) {
                 for (int j = 0; j < config.max_keys; j++) {
                     if (strcmp(sharedMemory->key_queue[j].chave, sharedMemory->alert_queue[i].chave) == 0) {
@@ -472,6 +483,8 @@ void AlertsWatcherProcess(int id) {
                     }
                 }
             }
+
+            sem_post(semaforo);
         }
 
         sem_post(semaforo_alerts);
@@ -626,7 +639,7 @@ int createSharedMemory() {
     }
 
     // Attach the shared memory
-    if ((sharedMemory = shmat(shmid, NULL, 0)) < 0) {
+    if ((sharedMemory = shmat(shmid, NULL, 0)) == (void *)-1) {
         perror("shmat() error\n");
         return 1;
     }
@@ -643,6 +656,7 @@ int createSharedMemory() {
     return 0;
 }
 
+// =========================== Threads ===========================
 void *sensorReader() {
     sem_wait(semaforo_log);
     escreverLog("THREAD SENSOR_READER\n");
@@ -775,18 +789,6 @@ void *consoleReader() {
             pthread_mutex_lock(&mutex);
             addNodeToQueue(newNode);
             pthread_mutex_unlock(&mutex);
-
-            // if (debug) {
-            //     printf("Queue:\n");
-
-            //     // Print the queue
-            //     Queue *currentNode = queue;
-
-            //     while (currentNode != NULL) {
-            //         printf("Command: %s\n", currentNode->command);
-            //         currentNode = currentNode->next;
-            //     }
-            // }
         }
 
         bzero(command, sizeof(command));
@@ -809,10 +811,10 @@ void *dispatcher(void *arg) {
             // Get the first node of the queue
             pthread_mutex_lock(&mutex);
             Queue *currentNode = popNodeFromQueue();
+            pthread_mutex_unlock(&mutex);
             sem_wait(semaforo);
             sharedMemory->queue_size--;
             sem_post(semaforo);
-            pthread_mutex_unlock(&mutex);
 
             if (currentNode != NULL) {
                 // If the node is a command
@@ -1031,7 +1033,7 @@ int main(int argc, char *argv[]) {
 
     } else if (alertsWatcherID == 0) {
         // Child process
-        AlertsWatcherProcess(1);
+        AlertsWatcherProcess();
         exit(0);
 
     } else {

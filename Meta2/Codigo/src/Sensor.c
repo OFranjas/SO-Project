@@ -105,7 +105,10 @@ int main(int argc, char *argv[]) {
     int random;
 
     while (1) {
-        random = rand() % (max)-min + 1 + min;
+        // random = rand() % (max)-min + 1 + min;
+
+        // Random number from min to max
+        random = (rand() % (max - min + 1)) + min;
 
         // Gerar a string com os argumentos
         char *string = malloc(sizeof(char) * 100);

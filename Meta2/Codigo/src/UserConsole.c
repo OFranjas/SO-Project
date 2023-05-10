@@ -1,7 +1,4 @@
 #include "header.h"
-/*
-- Menu para ler comandos
-*/
 
 int fd_console_pipe;
 
@@ -109,7 +106,7 @@ int main(int argc, char *argv[]) {
         perror("Error opening Message Queue\n");
         return 1;
     }
-    
+
     // =================== Criar thread para ler da Message Queue ===================
     pthread_t reader_thread;
 
@@ -153,6 +150,8 @@ int main(int argc, char *argv[]) {
             write(fd_console_pipe, aux, strlen(aux));
 
         } else if (strcmp(command, "sensors") == 0) {
+            printf("ID\n");
+
             sprintf(aux, "sensors;%d", consoleID);
             write(fd_console_pipe, aux, strlen(aux));
 

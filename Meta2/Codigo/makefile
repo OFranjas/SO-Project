@@ -1,4 +1,4 @@
-CFLAGS = -g -Wall -pthread
+CFLAGS = -g -Wall -pthread -Wextra
 CC = gcc
 OBJS1 = SystemManager.o Config.o
 PROG1 = SystemManager

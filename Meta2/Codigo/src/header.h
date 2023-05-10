@@ -19,10 +19,6 @@
 #include <time.h>
 #include <unistd.h>
 
-// typedef struct GlobalData {
-//     int fd_console_pipe, fd_sensor_pipe;
-
-// } Global;
 #define MAX_WORKERS 999
 #define MAX_STRING_SIZE 32
 #define MIN_STRING_SIZE 3
@@ -87,10 +83,15 @@ typedef struct alert_queue {
 
 } AlertQueue;
 
+typedef struct sensor_queue {
+    char id[BUFF_SIZE];
+
+} SensorQueue;
+
 typedef struct shared_memory_struct {
     KeyQueue key_queue[KEY_SIZE];
     AlertQueue alert_queue[KEY_SIZE];
-
+    SensorQueue sensor_queue[KEY_SIZE];
     int ocupados[MAX_WORKERS];
     int queue_size;
     int alerts_size;
