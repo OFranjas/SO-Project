@@ -20,6 +20,7 @@ FILE *logFile;
 sem_t *semaforo, *semaforo_log, *semaforo_alerts, *semaforo_keys;
 
 pthread_mutex_t mutex = PTHREAD_MUTEX_INITIALIZER;
+pthread_cond_t cond = PTHREAD_COND_INITIALIZER;
 
 int shmid;
 
@@ -586,6 +587,7 @@ void terminateAll() {
         sem_close(semaforo_alerts);
         sem_unlink(SEM_ALERTS_NAME);
 
+        pthread_cond_destroy(&cond);
         pthread_mutex_destroy(&mutex);
 
         fclose(logFile);
@@ -722,6 +724,8 @@ void *sensorReader() {
             addNodeToQueue(newNode);
             pthread_mutex_unlock(&mutex);
 
+            pthread_cond_signal(&cond);
+
             if (debug) {
                 printf("Queue:\n");
 
@@ -789,6 +793,7 @@ void *consoleReader() {
             pthread_mutex_lock(&mutex);
             addNodeToQueue(newNode);
             pthread_mutex_unlock(&mutex);
+            pthread_cond_signal(&cond);
         }
 
         bzero(command, sizeof(command));
@@ -806,98 +811,101 @@ void *dispatcher(void *arg) {
     int(*fd_unnamed_pipe)[2] = (int(*)[2])arg;
 
     while (1) {
-        // If the queue is not empty
-        if (queue != NULL) {
-            // Get the first node of the queue
-            pthread_mutex_lock(&mutex);
-            Queue *currentNode = popNodeFromQueue();
-            pthread_mutex_unlock(&mutex);
-            sem_wait(semaforo);
-            sharedMemory->queue_size--;
-            sem_post(semaforo);
+        pthread_mutex_lock(&mutex);
+        while (queue == NULL) {
+            pthread_cond_wait(&cond, &mutex);
+        }
+        pthread_mutex_unlock(&mutex);
 
-            if (currentNode != NULL) {
-                // If the node is a command
-                if (currentNode->prioridade == 9) {
-                    // Write to a random worker unnamed pipe
-                    int randomWorker = rand() % config.num_workers;
+        // Get the first node of the queue
+        pthread_mutex_lock(&mutex);
+        Queue *currentNode = popNodeFromQueue();
+        pthread_mutex_unlock(&mutex);
+        sem_wait(semaforo);
+        sharedMemory->queue_size--;
+        sem_post(semaforo);
 
-                    // Check if the worker is busy
-                    while (sharedMemory->ocupados[randomWorker] == 1) {
-                        randomWorker = rand() % config.num_workers;
-                    }
+        if (currentNode != NULL) {
+            // If the node is a command
+            if (currentNode->prioridade == 9) {
+                // Write to a random worker unnamed pipe
+                int randomWorker = rand() % config.num_workers;
 
-                    char message[BUFF_SIZE * 4];
-                    sprintf(message, "C;%s", currentNode->command);
-
-                    // Write to the worker
-                    if (write(fd_unnamed_pipe[randomWorker][1], message, sizeof(currentNode->command)) < 0) {
-                        perror("Error writing to worker");
-                    }
-
-                    // Write to the log
-                    sem_wait(semaforo_log);
-                    char buffa[4096 * 3];
-                    // sprintf(buffa, "DISPATCHER: %s SENT FOR PROCESSING ON WORKER %d\n", currentNode->command, randomWorker);
-
-                    // CurrentNode->command except last 2 characters
-                    char command[64];
-                    strncpy(command, currentNode->command, strlen(currentNode->command) - 2);
-                    command[strlen(currentNode->command) - 2] = '\0';
-
-                    sprintf(buffa, "DISPATCHER: %s SENT FOR PROCESSING ON WORKER %d\n", command, randomWorker);
-                    escreverLog(buffa);
-                    sem_post(semaforo_log);
+                // Check if the worker is busy
+                while (sharedMemory->ocupados[randomWorker] == 1) {
+                    randomWorker = rand() % config.num_workers;
                 }
 
-                // If the node is a message
-                if (currentNode->prioridade == 1) {
-                    if (debug) {
-                        printf("Dispatcher:\n");
-                        printf("ID: %s\n", currentNode->ID);
-                    }
+                char message[BUFF_SIZE * 4];
+                sprintf(message, "C;%s", currentNode->command);
 
-                    // Turn the message into a string of format -> ID#chave#valor
-                    char message[BUFF_SIZE * 4];
-                    sprintf(message, "S;%s#%s#%d", currentNode->ID, currentNode->chave, currentNode->valor);
-
-                    if (debug) {
-                        printf("Message: %s\n", message);
-                    }
-
-                    // Write to a random worker unnamed pipe
-                    int randomWorker = rand() % config.num_workers;
-
-                    if (debug) {
-                        printf("Random Worker: %d\n", randomWorker);
-                    }
-
-                    // Write to the worker
-                    if (write(fd_unnamed_pipe[randomWorker][1], message, sizeof(message)) < 0) {
-                        perror("Error writing to worker");
-                    }
-
-                    sem_wait(semaforo_log);
-                    char buffa[4096 * 3];
-                    sprintf(buffa, "DISPATCHER: %s %s %d SENT FOR PROCESSING ON WORKER %d\n", currentNode->ID, currentNode->chave, currentNode->valor, randomWorker);
-                    escreverLog(buffa);
-                    sem_post(semaforo_log);
+                // Write to the worker
+                if (write(fd_unnamed_pipe[randomWorker][1], message, sizeof(currentNode->command)) < 0) {
+                    perror("Error writing to worker");
                 }
 
-                // print the queue after the pop
+                // Write to the log
+                sem_wait(semaforo_log);
+                char buffa[4096 * 3];
+                // sprintf(buffa, "DISPATCHER: %s SENT FOR PROCESSING ON WORKER %d\n", currentNode->command, randomWorker);
+
+                // CurrentNode->command except last 2 characters
+                char command[64];
+                strncpy(command, currentNode->command, strlen(currentNode->command) - 2);
+                command[strlen(currentNode->command) - 2] = '\0';
+
+                sprintf(buffa, "DISPATCHER: %s SENT FOR PROCESSING ON WORKER %d\n", command, randomWorker);
+                escreverLog(buffa);
+                sem_post(semaforo_log);
+            }
+
+            // If the node is a message
+            if (currentNode->prioridade == 1) {
                 if (debug) {
-                    printf("Queue:\n");
+                    printf("Dispatcher:\n");
+                    printf("ID: %s\n", currentNode->ID);
+                }
 
-                    // Print the queue
-                    Queue *aux = queue;
+                // Turn the message into a string of format -> ID#chave#valor
+                char message[BUFF_SIZE * 4];
+                sprintf(message, "S;%s#%s#%d", currentNode->ID, currentNode->chave, currentNode->valor);
 
-                    while (aux != NULL) {
-                        printf("ID: %s\n", aux->ID);
-                        printf("Chave: %s\n", aux->chave);
-                        printf("Valor: %d\n", aux->valor);
-                        printf("Prioridade: %d\n", aux->prioridade);
-                        aux = aux->next;
-                    }
+                if (debug) {
+                    printf("Message: %s\n", message);
+                }
+
+                // Write to a random worker unnamed pipe
+                int randomWorker = rand() % config.num_workers;
+
+                if (debug) {
+                    printf("Random Worker: %d\n", randomWorker);
+                }
+
+                // Write to the worker
+                if (write(fd_unnamed_pipe[randomWorker][1], message, sizeof(message)) < 0) {
+                    perror("Error writing to worker");
+                }
+
+                sem_wait(semaforo_log);
+                char buffa[4096 * 3];
+                sprintf(buffa, "DISPATCHER: %s %s %d SENT FOR PROCESSING ON WORKER %d\n", currentNode->ID, currentNode->chave, currentNode->valor, randomWorker);
+                escreverLog(buffa);
+                sem_post(semaforo_log);
+            }
+
+            // print the queue after the pop
+            if (debug) {
+                printf("Queue:\n");
+
+                // Print the queue
+                Queue *aux = queue;
+
+                while (aux != NULL) {
+                    printf("ID: %s\n", aux->ID);
+                    printf("Chave: %s\n", aux->chave);
+                    printf("Valor: %d\n", aux->valor);
+                    printf("Prioridade: %d\n", aux->prioridade);
+                    aux = aux->next;
                 }
             }
         }
